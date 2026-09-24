@@ -1,0 +1,29 @@
+{
+  "meta": {
+    "sop_id": "SOP-001",
+    "title": "Purchase Order Confirmation",
+    "version": "1.0",
+    "theme": "default"
+  },
+  "lanes": [
+    { "id": "buyer",    "label": "Buyer Logistics" },
+    { "id": "supplier", "label": "Supplier" },
+    { "id": "portal",   "label": "Supplier Portal (System)" }
+  ],
+  "nodes": [
+    { "id": "start", "lane": "buyer",    "type": "start",    "label": "PO released" },
+    { "id": "t1",    "lane": "supplier", "type": "task",     "label": "Confirm PO in portal" },
+    { "id": "d1",    "lane": "buyer",    "type": "decision", "label": "Qty / date match?" },
+    { "id": "t2",    "lane": "buyer",    "type": "task",     "label": "Approve confirmation" },
+    { "id": "t3",    "lane": "supplier", "type": "task",     "label": "Revise confirmation" },
+    { "id": "end",   "lane": "portal",   "type": "end",      "label": "PO status: Confirmed" }
+  ],
+  "edges": [
+    { "from": "start", "to": "t1", "channel": "system" },
+    { "from": "t1",    "to": "d1", "channel": "system" },
+    { "from": "d1",    "to": "t2", "label": "Yes" },
+    { "from": "d1",    "to": "t3", "label": "No" },
+    { "from": "t3",    "to": "d1", "kind": "feedback", "channel": "user" },
+    { "from": "t2",    "to": "end", "channel": "system" }
+  ]
+}

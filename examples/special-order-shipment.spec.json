@@ -1,0 +1,52 @@
+{
+  "meta": {
+    "sop_id": "SOP-003",
+    "title": "Ship a Special-Order PO with a Standard PO",
+    "version": "1.0",
+    "theme": "default"
+  },
+  "lanes": [
+    { "id": "specialist", "label": "Specialist Team" },
+    { "id": "vendor", "label": "Vendor/Factory" },
+    { "id": "portal", "label": "Supplier Portal" },
+    { "id": "agent", "label": "Booking Agent" }
+  ],
+  "nodes": [
+    { "id": "start", "lane": "specialist", "type": "start", "label": "Special PO raised" },
+    { "id": "release", "lane": "specialist", "type": "task", "label": "Release special PO to vendor", "step": "1" },
+    { "id": "notify", "lane": "specialist", "type": "task", "label": "Notify vendor to include special PO", "step": "2",
+      "note": "The source diagram draws no inbound edge for this step; it is sequenced after step 1 so the flow stays reachable." },
+    { "id": "initiate", "lane": "vendor", "type": "task", "label": "Initiate booking for standard PO", "step": "3" },
+    { "id": "vb_request", "lane": "portal", "type": "document", "label": "Vendor Booking request", "step": "4" },
+    { "id": "recv_request", "lane": "agent", "type": "document", "label": "Receive Vendor Booking request", "step": "5" },
+    { "id": "offline_book", "lane": "vendor", "type": "task", "label": "Offline book shipment with agent", "step": "6" },
+    { "id": "recv_offline", "lane": "agent", "type": "task", "label": "Receive offline booking request", "step": "7",
+      "note": "The Vendor/Factory provides the Standard PO number and the Vendor Booking Number when booking the shipment offline with the agent." },
+    { "id": "submit_booking", "lane": "agent", "type": "task", "label": "Submit booking request", "step": "8" },
+    { "id": "vb_response", "lane": "portal", "type": "document", "label": "Vendor Booking Response updated", "step": "9" },
+    { "id": "packing_std", "lane": "vendor", "type": "subprocess", "label": "Create packing list for standard PO", "step": "10" },
+    { "id": "doc_folder", "lane": "portal", "type": "document", "label": "Document Folder - Vendor", "step": "11" },
+    { "id": "packing_special", "lane": "vendor", "type": "task", "label": "Create special PO packing list offline", "step": "12" },
+    { "id": "recv_packing", "lane": "agent", "type": "task", "label": "Receive special PO packing list", "step": "13" },
+    { "id": "end", "lane": "agent", "type": "end", "label": "Booking complete" }
+  ],
+  "edges": [
+    { "from": "start", "to": "release" },
+    { "from": "release", "to": "notify" },
+    { "from": "release", "to": "initiate" },
+    { "from": "notify", "to": "initiate" },
+    { "from": "initiate", "to": "vb_request", "label": "submit booking", "channel": "user" },
+    { "from": "initiate", "to": "offline_book" },
+    { "from": "vb_request", "to": "recv_request", "channel": "system" },
+    { "from": "offline_book", "to": "recv_offline", "label": "PO + booking no." },
+    { "from": "recv_request", "to": "recv_offline" },
+    { "from": "recv_offline", "to": "submit_booking" },
+    { "from": "submit_booking", "to": "vb_response", "channel": "system" },
+    { "from": "vb_response", "to": "packing_std", "channel": "system" },
+    { "from": "packing_std", "to": "doc_folder", "label": "Auto added", "channel": "system" },
+    { "from": "packing_std", "to": "packing_special" },
+    { "from": "packing_special", "to": "doc_folder", "label": "Manual upload", "channel": "user" },
+    { "from": "packing_special", "to": "recv_packing" },
+    { "from": "recv_packing", "to": "end" }
+  ]
+}

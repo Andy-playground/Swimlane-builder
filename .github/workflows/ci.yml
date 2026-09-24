@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Full suite (lint rules, geometry, golden XML)
+        run: python tests/test_all.py
+      - name: Normative schema vs examples (jsonschema, dev-only dep)
+        run: |
+          pip install jsonschema
+          python tools/check_schema.py
+
+  skill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build the Skill bundle
+        run: python tools/build_skill.py -o dist/swimlane-builder-skill.zip
+      - name: Determinism check — a second build must be byte-identical
+        run: |
+          python tools/build_skill.py -o dist/again.zip
+          cmp dist/swimlane-builder-skill.zip dist/again.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swimlane-builder-skill
+          path: dist/swimlane-builder-skill.zip

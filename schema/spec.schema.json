@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Andy-playground/swimlane-builder/main/schema/spec.schema.json",
+  "title": "swimlane-builder process spec",
+  "type": "object",
+  "required": ["meta", "lanes", "nodes", "edges"],
+  "additionalProperties": false,
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["sop_id", "title"],
+      "additionalProperties": false,
+      "properties": {
+        "sop_id":  { "type": "string", "minLength": 1 },
+        "title":   { "type": "string", "minLength": 1 },
+        "version": { "type": "string" },
+        "theme":   { "type": "string", "default": "default" }
+      }
+    },
+    "lanes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "label"],
+        "additionalProperties": false,
+        "properties": {
+          "id":    { "$ref": "#/$defs/ident" },
+          "label": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["id", "lane", "type", "label"],
+        "additionalProperties": false,
+        "properties": {
+          "id":    { "$ref": "#/$defs/ident" },
+          "lane":  { "$ref": "#/$defs/ident" },
+          "type":  { "enum": ["start", "end", "task", "decision", "subprocess", "document"] },
+          "label": { "type": "string", "minLength": 1 },
+          "col":   { "type": "integer", "minimum": 0 },
+          "step":  { "type": "string", "minLength": 1 },
+          "note":  { "type": "string" }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["from", "to"],
+        "additionalProperties": false,
+        "properties": {
+          "from":    { "$ref": "#/$defs/ident" },
+          "to":      { "$ref": "#/$defs/ident" },
+          "label":   { "type": "string" },
+          "kind":    { "enum": ["normal", "feedback"], "default": "normal" },
+          "channel": { "enum": ["offline", "system", "user"], "default": "offline" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "ident": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+  }
+}
