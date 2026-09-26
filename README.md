@@ -144,7 +144,7 @@ Each spec ships with its generated `.drawio` next to it. The process content is 
 |---|---|
 | [`po-confirmation`](examples/po-confirmation.spec.json) | The minimal flow — a decision, a rework loop, three lanes |
 | [`special-order-shipment`](examples/special-order-shipment.spec.json) | 13 steps: documents, a subprocess, all three line styles |
-| [`booking-change`](examples/booking-change.spec.json) | 17 steps: six decisions, branch labels that are not Yes/No, four lines merging on one node |
+| [`booking-change`](examples/booking-change.spec.json) | 17 steps: seven decisions, branch labels that are not Yes/No, four lines merging on one node |
 | [`delivery-dates`](examples/delivery-dates.spec.json) | 15 columns: exception steps carried in `note`, long decision questions |
 
 ## Development
