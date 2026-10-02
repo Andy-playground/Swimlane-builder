@@ -3,9 +3,17 @@ name: release
 on:
   push:
     tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: write
+
+# A release published in the GitHub web UI can also push its new tag, so two runs may
+# start for one version. They run one at a time, and the second only re-uploads.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -59,9 +67,12 @@ jobs:
 
           Python 3.11 or later. No dependencies.
           EOF
-          gh release create "$GITHUB_REF_NAME" \
-            dist/swimlane-builder-skill.zip \
-            dist/swimlane-builder-skill.zip.sha256 \
-            docs/media/swimlane-builder-showreel.mp4 \
-            --title "swimlane-builder $GITHUB_REF_NAME" \
-            --notes-file notes.md
+          assets="dist/swimlane-builder-skill.zip dist/swimlane-builder-skill.zip.sha256 docs/media/swimlane-builder-showreel.mp4"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # published from the web UI: attach the files and fill in the notes
+            gh release upload "$GITHUB_REF_NAME" $assets --clobber
+            gh release edit "$GITHUB_REF_NAME" --title "swimlane-builder $GITHUB_REF_NAME" --notes-file notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" $assets \
+              --title "swimlane-builder $GITHUB_REF_NAME" --notes-file notes.md
+          fi
