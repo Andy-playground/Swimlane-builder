@@ -188,3 +188,7 @@ not a replacement for opening the file in draw.io.
 - A long `start`/`end` label can overflow its fixed-size circle, and no lint code reports it yet.
 - Wide flows (roughly 14 columns and up) do not fit one laptop screen at a readable size. W209 says so;
   splitting the SOP into two flows is the author's call.
+
+## License
+
+[MIT](LICENSE) © 2026 Andy-playground
