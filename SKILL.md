@@ -22,7 +22,8 @@ no packages to install, no network, no other tools required.
 
 2. **Extract the spec.** Follow `prompts/extract_spec.md` to the letter — it defines the lane /
    node / edge rules, the ≤ 2-word branch-label policy, the exception-note grammar, and the JSON
-   Schema. Write the result to a working file, e.g. `work/<sop_id>.spec.json`. The spec is an
+   Schema. Write the result to a working file, e.g. `work/<sop_id>.spec.json` — the prompt's
+   "output only the JSON" rule describes that file's contents, not your reply. The spec is an
    internal artifact: do not show the raw JSON unless the user asks for it.
 
 3. **Lint until clean.** Run:

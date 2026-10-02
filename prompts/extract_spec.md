@@ -110,6 +110,9 @@ Walk this list; it mirrors the validator that runs next:
 
 ## Example
 
+It is illustrative: match its JSON shape, not its length or wording — a real SOP gets as many
+lanes, steps, and notes as its own table supports.
+
 ### Source (abridged)
 
 > **SOP-001 — Purchase Order Confirmation** · PROCESS WORKFLOW
