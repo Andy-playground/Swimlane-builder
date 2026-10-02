@@ -3,6 +3,17 @@
 **Turn an SOP (standard operating procedure) into a clean draw.io swimlane diagram — the same
 input always gives the same picture.**
 
+<p align="center">
+  <img src="docs/media/hero.webp" width="800"
+       alt="swimlane-builder laying out a diagram: columns from the flow, boxes sized from their text, lines routed through free corridors">
+</p>
+
+<p align="center">
+  <a href="docs/media/swimlane-builder-showreel.mp4"><b>▶ Watch the 30-second overview</b></a> (with sound)
+  &nbsp;·&nbsp;
+  <a href="https://github.com/Andy-playground/Swimlane-builder/releases/latest"><b>Download the latest release</b></a>
+</p>
+
 An LLM reads the SOP and writes down *what* happens — who does which step, where the flow
 branches, which steps loop back — as a small JSON spec. A plain Python program then works out
 *where* everything goes: columns, lane heights, box widths, and every line's route. The result
@@ -47,7 +58,10 @@ Open `po-confirmation.drawio` in draw.io. Nothing to install.
 
 [`SKILL.md`](SKILL.md) drives the whole flow in any agent host that has file access and
 Python ≥ 3.11: hand it an SOP (text or `.docx`) and it extracts, lints, shows you a summary to
-review, and returns the `.drawio`. Build the portable bundle with:
+review, and returns the `.drawio`.
+
+Download `swimlane-builder-skill.zip` from the [latest release](https://github.com/Andy-playground/Swimlane-builder/releases/latest) (its SHA-256 is listed
+there), or build the same bytes yourself:
 
 ```bash
 python3 tools/build_skill.py        # → dist/swimlane-builder-skill.zip + its sha256
