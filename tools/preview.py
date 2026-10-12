@@ -237,8 +237,11 @@ def route(p_exit, d_exit, p_entry, d_entry, waypoints):
     """Orthogonal path. Explicit waypoints are honoured; otherwise approximate
     draw.io's router with a single mid-corridor jog."""
     pts = [p_exit]
-    p1 = (p_exit[0] + d_exit[0] * JETTY, p_exit[1] + d_exit[1] * JETTY)
-    p2 = (p_entry[0] + d_entry[0] * JETTY, p_entry[1] + d_entry[1] * JETTY)
+    # explicit waypoints already fix the stub: a jetty longer than the stub overshoots the
+    # first bend and doubles back, which drew a spur at every port the router turns close to
+    j = 0 if waypoints else JETTY
+    p1 = (p_exit[0] + d_exit[0] * j, p_exit[1] + d_exit[1] * j)
+    p2 = (p_entry[0] + d_entry[0] * j, p_entry[1] + d_entry[1] * j)
     pts.append(p1)
     if waypoints:
         cur = p1
@@ -268,15 +271,22 @@ def route(p_exit, d_exit, p_entry, d_entry, waypoints):
     return out
 
 
+def _step(u, v, r):
+    """Which way a corner rounds along one axis. A port ratio written with six digits puts
+    the port a few 1e-5 px off its waypoint's axis; that is not a direction, and reading it
+    as one drew a hook back towards the node."""
+    return r if v - u > 0.5 else -r if u - v > 0.5 else 0
+
+
 def path_d(pts):
     d = [f"M {pts[0][0]:.1f} {pts[0][1]:.1f}"]
     for i in range(1, len(pts) - 1):
         a, b, c = pts[i - 1], pts[i], pts[i + 1]
         r = min(CORNER, abs(b[0] - a[0]) / 2 + abs(b[1] - a[1]) / 2, abs(c[0] - b[0]) / 2 + abs(c[1] - b[1]) / 2)
-        ax = b[0] - (r if b[0] > a[0] else -r if b[0] < a[0] else 0)
-        ay = b[1] - (r if b[1] > a[1] else -r if b[1] < a[1] else 0)
-        cx = b[0] + (r if c[0] > b[0] else -r if c[0] < b[0] else 0)
-        cy = b[1] + (r if c[1] > b[1] else -r if c[1] < b[1] else 0)
+        ax = b[0] - _step(a[0], b[0], r)
+        ay = b[1] - _step(a[1], b[1], r)
+        cx = b[0] + _step(b[0], c[0], r)
+        cy = b[1] + _step(b[1], c[1], r)
         d.append(f"L {ax:.1f} {ay:.1f} Q {b[0]:.1f} {b[1]:.1f} {cx:.1f} {cy:.1f}")
     d.append(f"L {pts[-1][0]:.1f} {pts[-1][1]:.1f}")
     return " ".join(d)
