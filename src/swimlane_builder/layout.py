@@ -7,32 +7,25 @@ from collections import defaultdict
 ROUND_OUTLINE = ("start", "end", "decision")  # ports off-centre sit outside the outline
 
 
-def slots(theme):
-    """The tracks a corridor holds: `0, +PITCH, −PITCH, …`, `TRACKS` of them.
+def corridor_need(theme, k):
+    """Width a corridor needs to carry `k` parallel runs:
+    `(k − 1) · TRACK_PITCH + 2 · KERB` — the runs `TRACK_PITCH` apart, centred on the
+    corridor's axis, and `KERB` of clear space beyond the outermost one on each side.
 
-    One list, sized by the theme, serves both kinds of corridor (the vertical gutter
-    between columns and the horizontal road along a lane's edge). Beyond `TRACKS` the
-    slots are reused cyclically, which is legal only while the reused runs are disjoint
-    in x — the routing tests assert that.
+    A fixed number of tracks per corridor, reused cyclically once they ran out, put two
+    runs on top of each other the first time a gutter carried four. A corridor is now as
+    wide as its own traffic: this is the width, `k` is the overlap depth `_route_edges`
+    measures, and `column_table` and the lane heights are built from it.
     """
-    pitch = theme["geometry"]["TRACK_PITCH"]
-    out = [0]
-    for i in range(1, theme["geometry"]["TRACKS"]):
-        out.append(pitch * ((i + 1) // 2) * (1 if i % 2 else -1))
-    return tuple(out)
+    g = theme["geometry"]
+    return (max(k, 1) - 1) * g["TRACK_PITCH"] + 2 * g["KERB"]
 
 
 def corridor_w(theme):
-    """`(TRACKS − 1) · TRACK_PITCH + 2 · KERB` — the width a corridor needs to carry its
-    tracks and still keep `KERB` of clear space at each edge.
-
-    `ROAD_W` and `GUTTER` are the same expression reached by independent arguments: one
-    is the lane's top/bottom padding, the other the term `column_table` adds to a
-    column's widest box. They come out equal at 24 px for the shipped constants; that is a coincidence of
-    those constants, not a rule, so a theme may raise either alone.
-    """
-    g = theme["geometry"]
-    return (g["TRACKS"] - 1) * g["TRACK_PITCH"] + 2 * g["KERB"]
+    """The baseline corridor — `corridor_need(TRACKS)` — every road and gutter is built
+    with before any traffic is counted, so an empty corridor is never narrower than this.
+    `ROAD_W` and `GUTTER` are this number until their own traffic asks for more."""
+    return corridor_need(theme, theme["geometry"]["TRACKS"])
 
 
 def text_width(s, theme, size=None):
@@ -121,7 +114,7 @@ def node_size(ntype, label, theme):
     return g["NODE_W_MAX"], g["H_NODE"]
 
 
-def lane_height(theme, label, depth):
+def lane_height(theme, label, depth, road=None):
     """A lane band. `H_NODE` is an input, so this needs no pass of its own.
 
     **A lane title is a height demand, and this is the only place that says so.** The
@@ -132,9 +125,14 @@ def lane_height(theme, label, depth):
     A deeper cell grows the lane; it never shrinks the shapes. Splitting the band between
     two shapes was measured and rejected — at `H_NODE` 120 a halved box offers two
     wrapped lines at 14 pt, while real SOP labels need up to six.
+
+    `road` is this lane's road width — the baseline unless the lane's own
+    traffic needs more; both roads take the wider of the two so the shape row stays
+    centred.
     """
     g = theme["geometry"]
-    h_shapes = 2 * corridor_w(theme) + depth * g["H_NODE"] + max(depth - 1, 0) * g["V_GAP"]
+    road = corridor_w(theme) if road is None else road
+    h_shapes = 2 * road + depth * g["H_NODE"] + max(depth - 1, 0) * g["V_GAP"]
     title_lines = max(g["LANE_TITLE_W"] // g["LINE_H"], 1)
     h_title = -(-text_width(label, theme) // title_lines) + 2 * g["LANE_TITLE_PAD"]
     return int(-(-max(h_shapes, h_title) // g["GRID"]) * g["GRID"])
@@ -241,14 +239,14 @@ def _inset(ntype, r):
 def _on_outline(ntype, side, x, y):
     """Project a port onto the node's visible outline."""
     if ntype not in ROUND_OUTLINE:
-        return round(x, 3), round(y, 3)
+        return round(x, 6), round(y, 6)
     if side in ("L", "R"):
         d = _inset(ntype, y)
         x = d if side == "L" else 1 - d
     else:
         d = _inset(ntype, x)
         y = d if side == "T" else 1 - d
-    return round(x, 3), round(y, 3)
+    return round(x, 6), round(y, 6)
 
 
 def _crosses(boxes, p, q):
@@ -261,27 +259,31 @@ def _crosses(boxes, p, q):
     return False
 
 
-def column_table(theme, widest):
+def column_table(theme, widest, gutter_need=None):
     """The column table — `columns[c] = {x_left, w}`, where:
 
-        COL_W(c) = roundup_GRID( w_max(c) + GUTTER )
+        COL_W(c) = roundup_GRID( w_max(c) + max( GUTTER, need(c), need(c + 1) ) )
 
-    The canvas width, every node's x-centre and every routing corridor's x read this
-    table. Any drift between a copy that places nodes and a copy that places corridors
-    would put an edge through a node body, so this is the single source.
+    where `need(b)` is the width the gutter on column boundary `b` needs for its own
+    traffic (boundary `b` is the left edge of column `b`). The canvas width, every node's
+    x-centre and every routing corridor's x read this table. Any drift between a copy that
+    places nodes and a copy that places corridors would put an edge through a node body,
+    so this is the single source.
 
     **The corridor clearance is part of the width's definition, not a check run after
-    the fact.** A node is centred, so its left edge sits at least `GUTTER/2` right of the
-    column boundary; a vertical run rides that boundary offset by at most `TRACK_PITCH`,
-    so it clears every box in the columns either side by at least `KERB`. That is what
-    makes variable columns safe — a theme cannot widen a node into a corridor, because
-    the corridor widens with it.
+    the fact.** A node is centred, so each of its sides sits half the column's slack from
+    a boundary; that half is at least half of what either boundary's gutter needs, so
+    every run in the gutter — at most `(k − 1)·TRACK_PITCH / 2` off the boundary — clears
+    every box in the columns either side by at least `KERB`. A theme cannot widen a node
+    into a corridor, and traffic cannot crowd one, because the corridor widens with both.
     """
     g = theme["geometry"]
-    grid, gutter = g["GRID"], corridor_w(theme)
+    grid, base = g["GRID"], corridor_w(theme)
+    need = gutter_need or {}
     x = g["LANE_TITLE_W"] + g["MARGIN_X"]
     columns = []
-    for w_max in widest:
+    for c, w_max in enumerate(widest):
+        gutter = max(base, need.get(c, 0), need.get(c + 1, 0))
         w = -(-(w_max + gutter) // grid) * grid            # roundup_GRID
         columns.append({"x_left": x, "w": w})
         x += w
@@ -294,16 +296,124 @@ def canvas_width(theme, columns):
     return g["LANE_TITLE_W"] + 2 * g["MARGIN_X"] + sum(c["w"] for c in columns)
 
 
+class _Track:
+    """A run's place in a corridor, decided late.
+
+    A path is built first with every corridor run as one of these, carrying only *which*
+    corridor it rides — `("gutter", b)` for column boundary `b`, `("road", lane, side)`
+    for one of a lane's two roads. Its offset is assigned once every path exists, from
+    the runs that actually overlap it, so the allocator counts overlaps rather than calls."""
+    __slots__ = ("key", "base", "val")
+
+    def __init__(self, key, base):
+        self.key, self.base, self.val = key, base, None
+
+
+def _at(v):
+    """A coordinate as routing reasons about it: a track's corridor axis until the track
+    has an offset."""
+    return v.base if isinstance(v, _Track) else v
+
+
+def _orders(n):
+    """Every ordering of `range(n)` — `itertools.permutations` without the import, which
+    the stdlib-only runtime does not list. Callers that need a tie-break impose one."""
+    if n == 0:
+        yield ()
+        return
+    for rest in _orders(n - 1):
+        for i in range(n, -1, -1):
+            yield rest[:i] + (n - 1,) + rest[i:]
+
+
+def _parallel_close(p, q, a, b, gap):
+    """True if segment p-q and segment a-b are parallel, closer than `gap`, and overlap
+    along their length — two runs a reader cannot tell apart."""
+    for ax in (0, 1):
+        o = 1 - ax
+        if p[ax] == q[ax] and a[ax] == b[ax] and abs(p[ax] - a[ax]) < gap:
+            if min(max(p[o], q[o]), max(a[o], b[o])) > max(min(p[o], q[o]), min(a[o], b[o])):
+                return True
+    return False
+
+
+FAN_SEARCH_MAX = 4      # ports on one face whose orders are all tried (4! = 24)
+
+
+def _crossings(edges):
+    """How many times a vertical segment of one edge crosses a horizontal segment of
+    another, strictly inside both — the budget the routing tests hold each example to."""
+    segs = [(i, p, q) for i, e in enumerate(edges) for p, q in zip(e["path"], e["path"][1:])]
+    vert = [(i, p, q) for i, p, q in segs if p[0] == q[0] and p[1] != q[1]]
+    horiz = [(i, p, q) for i, p, q in segs if p[1] == q[1] and p[0] != q[0]]
+    n = 0
+    for i, v1, v2 in vert:
+        lo, hi = sorted((v1[1], v2[1]))
+        for j, h1, h2 in horiz:
+            if i != j and min(h1[0], h2[0]) < v1[0] < max(h1[0], h2[0]) and lo < h1[1] < hi:
+                n += 1
+    return n
+
+
+def _assign_tracks(uses, pitch):
+    """Offsets for every corridor run. Returns {corridor key: overlap depth}.
+
+    Runs in one corridor are grouped by overlap along the corridor — spans closer than
+    one `pitch` count as overlapping, so two runs never meet end to end on one line —
+    and each group of `k` runs takes `k` distinct tracks, `pitch` apart and centred on
+    the corridor's axis. That is the whole invariant: no two runs share a line, at any
+    depth. Within a group the order is the one that crosses least, where a run's stub
+    leaving towards the far side of a neighbour inside that neighbour's span is one
+    crossing; ties, and groups too large to search, keep the spans' own order.
+    """
+    depth = {}
+
+    def cost(u, v):                                 # u on the lower-coordinate track
+        c = sum(1 for at, side in u["ends"] if side > 0 and v["lo"] < at < v["hi"])
+        return c + sum(1 for at, side in v["ends"] if side < 0 and u["lo"] < at < u["hi"])
+
+    for key in sorted(uses, key=repr):
+        runs = sorted(uses[key], key=lambda u: (u["lo"], u["hi"], u["order"]))
+        groups, cur, reach = [], [], None
+        for u in runs:
+            if cur and u["lo"] <= reach + pitch:
+                cur.append(u)
+                reach = max(reach, u["hi"])
+            else:
+                if cur:
+                    groups.append(cur)
+                cur, reach = [u], u["hi"]
+        groups.append(cur)
+        for grp in groups:
+            k = len(grp)
+            order = range(k)
+            if 1 < k <= 6:
+                order = min(_orders(k), key=lambda p: (sum(cost(grp[p[a]], grp[p[b]])
+                                                           for a in range(k) for b in range(a + 1, k)), p))
+            for j, i in enumerate(order):
+                grp[i]["track"].val = round(grp[i]["track"].base + (j - (k - 1) / 2) * pitch)
+            depth[key] = max(depth.get(key, 0), k)
+    return depth
+
+
 def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
-    """Explicit Manhattan paths. Vertical runs stay in the gaps between
-    columns, horizontal runs in a lane's PAD_V band — both are free of nodes by
-    construction — so no segment can cross a node body."""
+    """Explicit Manhattan paths. Returns `(edges, depth)` — the routed edges, and the
+    overlap depth of every corridor, which the column table and lane heights are sized from.
+
+    Two kinds of path, and both keep clear of every node by construction:
+    - a **shortcut** — one bend, straight from the exit face to the entry face — taken
+      only when both of its segments clear every other node by half a baseline corridor
+      and no other shortcut runs alongside it;
+    - otherwise a **corridor path**: vertical runs on column boundaries, horizontal runs in
+      a lane's roads, both free of nodes because the column and lane sizes make them so.
+    """
     g = theme["geometry"]
     node = {n["id"]: n for n in nodes_out}
     lane_of = {l["id"]: l for l in lanes_out}
     lane_i = {l["id"]: i for i, l in enumerate(spec["lanes"])}
     steps = {n["id"]: n.get("step") for n in spec["nodes"]}
     primary_labels = {p.lower() for p in theme["primary_labels"]}
+    right_edge = columns[-1]["x_left"] + columns[-1]["w"]
 
     def box(nid):
         n = node[nid]
@@ -317,14 +427,19 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
         few px of the stub legitimately run through the box's empty corner."""
         return [b for nid, b in boxes.items() if nid not in (s, t)]
 
-    def col_edge(nid, side):                       # x of the column gap beside a node
-        c = columns[node[nid]["col"]]
-        return c["x_left"] + c["w"] if side == "R" else c["x_left"]
+    def gutter(b):                                  # a run on column boundary b
+        return _Track(("gutter", b), columns[b]["x_left"] if b < len(columns) else right_edge)
 
-    def band(nid, side):                           # y of one of the lane's two roads
-        lane = lane_of[node[nid]["lane"]]
-        half = corridor_w(theme) // 2
+    def col_edge(nid, side):                        # the column boundary beside a node
+        return gutter(node[nid]["col"] + (1 if side == "R" else 0))
+
+    def road_y(lane, side):
+        half = lane["road"] // 2
         return lane["y"] + lane["h"] - half if side == "B" else lane["y"] + half
+
+    def band(nid, side):                            # a run in one of the lane's two roads
+        lane = lane_of[node[nid]["lane"]]
+        return _Track(("road", lane["id"], side), road_y(lane, side))
 
     # a node stacked directly above/below blocks that side's stub
     stack = defaultdict(list)
@@ -355,20 +470,33 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
                 return side
         return wanted[-1]
 
-    sides = []
+    exits = []
     for e in spec["edges"]:
         s, t = e["from"], e["to"]
         below = lane_i[node[t]["lane"]] > lane_i[node[s]["lane"]]
         if e.get("kind", "normal") == "feedback":
-            ex = pick(s, ("B", "T", "L"))
+            exits.append(pick(s, ("B", "T", "L")))
         elif node[s]["type"] == "decision" and not primary.get(id(e)):
-            ex = pick(s, ("B", "T", "L") if below or node[t]["lane"] == node[s]["lane"] else ("T", "B", "L"))
+            exits.append(pick(s, ("B", "T", "L") if below or node[t]["lane"] == node[s]["lane"]
+                              else ("T", "B", "L")))
         else:
-            ex = "R"
-        if node[t]["col"] != node[s]["col"]:
-            en = "L"
-        else:
+            exits.append("R")
+    exit_faces = {(e["from"], ex) for e, ex in zip(spec["edges"], exits)}
+
+    sides = []
+    for e, ex in zip(spec["edges"], exits):
+        s, t = e["from"], e["to"]
+        ls, lt = lane_i[node[s]["lane"]], lane_i[node[t]["lane"]]
+        if node[t]["col"] == node[s]["col"]:
             en = pick(t, ("T", "B") if box(t)[1] > box(s)[1] else ("B", "T"))
+        else:
+            en = "L"
+            # forward flow arriving from another lane enters on the face it arrives from,
+            # unless that face is blocked or already carries one of the target's exits
+            if e.get("kind", "normal") == "normal" and node[t]["col"] > node[s]["col"] and lt != ls:
+                face = "T" if lt > ls else "B"
+                if not blocked(t, face) and (t, face) not in exit_faces:
+                    en = face
         sides.append((ex, en))
 
     # ---- 2. fan-out: several edges on one face attach at distinct points (i/(k+1))
@@ -376,79 +504,149 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
     for i, (e, (ex, en)) in enumerate(zip(spec["edges"], sides)):
         groups[(e["from"], ex, "out")].append((node[e["to"]]["col"], lane_i[node[e["to"]]["lane"]], e["to"], i))
         groups[(e["to"], en, "in")].append((node[e["from"]]["col"], lane_i[node[e["from"]]["lane"]], e["from"], i))
-    ratio = {}
-    for (nid, side, kind), members in groups.items():
-        members.sort()
-        k = len(members)
-        for j, (_, _, _, i) in enumerate(members):
-            ratio[(i, kind)] = round(0.5 if k == 1 else (j + 1) / (k + 1), 3)
+    order = {key: [m[-1] for m in sorted(members)] for key, members in groups.items()}
 
-    # ---- 3. corridor slots: parallel runs in one corridor are offset so they stay apart
-    track = slots(theme)                           # one list for both corridors
-    used = defaultdict(int)
+    def ratios(order):
+        out = {}
+        for (nid, side, kind), members in order.items():
+            k = len(members)
+            for j, i in enumerate(members):
+                out[(i, kind)] = round(0.5 if k == 1 else (j + 1) / (k + 1), 3)
+        return out
 
-    def slot(value, offsets):
-        k = used[value]
-        used[value] = k + 1
-        return value + offsets[k % len(offsets)]
+    def port(nid, side, r):
+        """A port on face `side` at ratio `r`, snapped so its along-face coordinate is a
+        whole pixel — the axis the first or last waypoint shares with it — then projected
+        onto the visible outline. Returns (ratio pair, point)."""
+        bx, by, bw, bh = boxes[nid]
+        if side in ("L", "R"):
+            along = round(by + bh * r)
+            rel = _on_outline(node[nid]["type"], side, 0.0 if side == "L" else 1.0,
+                              round((along - by) / bh, 6))
+            return rel, (round(bx + bw * rel[0]), along)
+        along = round(bx + bw * r)
+        rel = _on_outline(node[nid]["type"], side, round((along - bx) / bw, 6),
+                          0.0 if side == "T" else 1.0)
+        return rel, (along, round(by + bh * rel[1]))
 
-    edges_out = []
-    for i, (e, (ex, en)) in enumerate(zip(spec["edges"], sides)):
-        s, t = e["from"], e["to"]
-        rs, rt = ratio[(i, "out")], ratio[(i, "in")]
-        label_pos = None                            # computed by _place_labels once the path exists
-        sx, sy, sw, sh = box(s)
-        tx, ty, tw, th = box(t)
-        exit_r = (1.0, rs) if ex == "R" else (0.0, rs) if ex == "L" else (rs, 0.0 if ex == "T" else 1.0)
-        entry_r = (0.0, rt) if en == "L" else (1.0, rt) if en == "R" else (rt, 0.0 if en == "T" else 1.0)
-        exit_r = _on_outline(node[s]["type"], ex, *exit_r)
-        entry_r = _on_outline(node[t]["type"], en, *entry_r)
-        E = (round(sx + sw * exit_r[0]), round(sy + sh * exit_r[1]))
-        N = (round(tx + tw * entry_r[0]), round(ty + th * entry_r[1]))
-        clear = others(s, t)
+    def build(ratio):
+        """Steps 3–4 for one assignment of ports: every path, then every track."""
+        # ---- 3. paths, with every corridor run left as a _Track
+        clearance = corridor_w(theme) // 2              # what a lone run in a baseline corridor keeps
+        shortcuts = []
+        raw = []
+        for i, (e, (ex, en)) in enumerate(zip(spec["edges"], sides)):
+            s, t = e["from"], e["to"]
+            exit_r, E = port(s, ex, ratio[(i, "out")])
+            entry_r, N = port(t, en, ratio[(i, "in")])
+            clear = others(s, t)
 
-        # straight shot — the common left-to-right hop needs no waypoints at all
-        if ((ex in "RL" and en in "RL" and E[1] == N[1]) or (ex in "TB" and en in "TB" and E[0] == N[0])) \
-                and not _crosses(clear, E, N):
-            edges_out.append(_edge(e, s, t, exit_r, entry_r, ex, en, E, N, [], label_pos))
-            continue
+            # straight shot — the common left-to-right hop needs no waypoints at all
+            if ((ex in "RL" and en in "RL" and E[1] == N[1]) or (ex in "TB" and en in "TB" and E[0] == N[0])) \
+                    and not _crosses(clear, E, N):
+                raw.append((e, s, t, exit_r, entry_r, ex, en, E, N, []))
+                continue
 
-        a_kind = "x" if ex in ("R", "L") else "y"
-        b_kind = "x" if en in ("L", "R") else "y"
-        a_base = col_edge(s, ex) if a_kind == "x" else band(s, ex)
-        b_base = col_edge(t, en) if b_kind == "x" else band(t, en)
-        offs = track
-        if a_kind == b_kind and a_base == b_base:       # one shared corridor, one slot
-            a_val = b_val = slot(a_base, offs)
-        else:
-            a_val = slot(a_base, offs)
-            b_val = slot(b_base, track)
-        A = (a_val, E[1]) if a_kind == "x" else (E[0], a_val)
-        B = (b_val, N[1]) if b_kind == "x" else (N[0], b_val)
+            # shortcut — one bend, when the faces point at each other's quadrant
+            corner = None
+            if ex in "RL" and en in "TB" and (N[0] > E[0]) == (ex == "R") and (N[1] > E[1]) == (en == "T"):
+                corner = (N[0], E[1])
+            elif ex in "TB" and en in "RL" and (N[1] > E[1]) == (ex == "B") and (N[0] > E[0]) == (en == "L"):
+                corner = (E[0], N[1])
+            if corner is not None:
+                fat = [(bx - clearance, by - clearance, bw + 2 * clearance, bh + 2 * clearance)
+                       for bx, by, bw, bh in clear]
+                legs = [(E, corner), (corner, N)]
+                if not any(_crosses(fat, p, q) for p, q in legs) and \
+                        not any(_parallel_close(p, q, a, b, g["TRACK_PITCH"]) for p, q in legs for a, b in shortcuts):
+                    shortcuts.extend(legs)
+                    raw.append((e, s, t, exit_r, entry_r, ex, en, E, N, [corner]))
+                    continue
 
-        if a_kind == "x" and b_kind == "x":
-            if A[0] == B[0] or (A[1] == B[1] and not _crosses(clear, A, B)):
+            a_kind = "x" if ex in ("R", "L") else "y"
+            b_kind = "x" if en in ("L", "R") else "y"
+            a_val = col_edge(s, ex) if a_kind == "x" else band(s, ex)
+            b_val = col_edge(t, en) if b_kind == "x" else band(t, en)
+            if a_val.key == b_val.key:                  # one shared corridor, one run
+                b_val = a_val
+            A = (a_val, E[1]) if a_kind == "x" else (E[0], a_val)
+            B = (b_val, N[1]) if b_kind == "x" else (N[0], b_val)
+
+            if a_kind == "x" and b_kind == "x":
+                if a_val is b_val or (A[1] == B[1] and not _crosses(clear, (_at(A[0]), A[1]), (_at(B[0]), B[1]))):
+                    pts = [A, B]
+                else:                                    # detour through a lane's road
+                    near = _near_band(lane_i, lane_of, node, s, t, (A[1] + B[1]) / 2)
+                    cy = band(t, near)
+                    pts = [A, (A[0], cy), (B[0], cy), B]
+            elif a_kind == "y" and b_kind == "x":
+                pts = [A, (B[0], A[1]), B]
+            elif a_kind == "x" and b_kind == "y":
+                pts = [A, (A[0], B[1]), B]
+            elif a_val is b_val:
                 pts = [A, B]
-            else:                                        # detour through a lane's padding band
-                near = _near_band(lane_i, lane_of, node, s, t, (A[1] + B[1]) / 2)
-                cy = slot(band(t, near), track)
-                pts = [A, (A[0], cy), (B[0], cy), B]
-        elif a_kind == "y" and b_kind == "x":
-            pts = [A, (B[0], A[1]), B]
-        elif a_kind == "x" and b_kind == "y":
-            pts = [A, (A[0], B[1]), B]
-        elif A[1] == B[1]:
-            pts = [A, B]
-        else:
-            vx = slot(col_edge(t, "R" if node[t]["col"] < node[s]["col"] else "L"), track)
-            pts = [A, (vx, A[1]), (vx, B[1]), B]
+            else:
+                vx = col_edge(t, "R" if node[t]["col"] < node[s]["col"] else "L")
+                pts = [A, (vx, A[1]), (vx, B[1]), B]
+            raw.append((e, s, t, exit_r, entry_r, ex, en, E, N, pts))
 
-        edges_out.append(_edge(e, s, t, exit_r, entry_r, ex, en, E, N, pts, label_pos))
+        # ---- 4. tracks: every corridor run gets an offset from the runs it actually overlaps
+        uses = defaultdict(list)
+        for order, r in enumerate(raw):
+            path = [r[7]] + r[9] + [r[8]]
+            seen = set()
+            for p in path:
+                for ax in (0, 1):
+                    tk = p[ax]
+                    if not isinstance(tk, _Track) or id(tk) in seen:
+                        continue
+                    seen.add(id(tk))
+                    idx = [k for k, q in enumerate(path) if q[ax] is tk]
+                    along = [_at(path[k][1 - ax]) for k in idx]
+                    ends = []
+                    for k_end, k_nb in ((idx[0], idx[0] - 1), (idx[-1], idx[-1] + 1)):
+                        if 0 <= k_nb < len(path):
+                            ends.append((_at(path[k_end][1 - ax]), -1 if _at(path[k_nb][ax]) < tk.base else 1))
+                    uses[tk.key].append({"track": tk, "lo": min(along), "hi": max(along),
+                                         "ends": ends, "order": order})
+        depth = _assign_tracks(uses, g["TRACK_PITCH"])
+
+        def resolve(p):
+            return tuple(v.val if isinstance(v, _Track) else v for v in p)
+
+        edges_out = []
+        for e, s, t, exit_r, entry_r, ex, en, E, N, pts in raw:
+            path = [E]
+            for p in [resolve(p) for p in pts] + [N]:
+                if p != path[-1]:                       # a run on its corridor's axis can leave a zero-length leg
+                    path.append(p)
+            edges_out.append(_edge(e, s, t, exit_r, entry_r, ex, en, path[0], path[-1], path[1:-1], None))
+        return edges_out, depth
+
+    # ---- 5. port order is searched, not configured: where several edges share a face,
+    # every order of their ports is tried and the one with the fewest crossings kept. A
+    # run's far end does not say where it arrives from — a feedback loop that wraps round
+    # through a gutter arrives from the opposite side — so the order is judged on the
+    # routed paths themselves. Ties keep the (column, lane, id) order.
+    edges_out, depth = build(ratios(order))
+    best = _crossings(edges_out)
+    for key in sorted(order, key=repr):
+        members = order[key]
+        if not 2 <= len(members) <= FAN_SEARCH_MAX or best == 0:
+            continue
+        for perm in _orders(len(members)):
+            trial = {**order, key: [members[j] for j in perm]}
+            if trial[key] == order[key]:
+                continue
+            cand, cand_depth = build(ratios(trial))
+            n = _crossings(cand)
+            if n < best:
+                best, order, edges_out, depth = n, trial, cand, cand_depth
 
     def free_side(nid):
         return "T" if not blocked(nid, "T") else "B"
 
-    return _place_labels(edges_out, boxes, node, theme, free_side)
+    return _place_labels(edges_out, boxes, node, theme, free_side), depth
 
 
 def _seg_lengths(path):
@@ -534,8 +732,11 @@ def _place_labels(edges_out, boxes, node, theme, free_side):
         if segs:                                    # (d) beside the exit stub, clear of the source node
             up = (sy - clear - h / 2) - mid[0][1]
             down = (sy + sh + clear + h / 2) - mid[0][1]
-            cands += [(0, (0.0, up if free_side(e["from"]) == "T" else down)),
-                      (0, (0.0, down if free_side(e["from"]) == "T" else up))]
+            # a stub leaving by the top or bottom has its label on that side; a label on the
+            # far side of the node from its own line reads as belonging to another edge
+            first = e["exit_side"] if e["exit_side"] in ("T", "B") else free_side(e["from"])
+            cands += [(0, (0.0, up if first == "T" else down)),
+                      (0, (0.0, down if first == "T" else up))]
         if not cands:
             e["label_pos"] = None
             continue
@@ -570,7 +771,14 @@ def page_size(theme, w, h):
 
 
 def compute(spec, theme):
-    """Full layout. All coordinates are ints; node x/y are lane-relative."""
+    """Full layout. All coordinates are ints; node x/y are lane-relative.
+
+    Corridors are sized by their traffic, and traffic is only known once edges
+    are routed, so placement and routing run until the corridor widths stop growing.
+    Widths only ever grow, by at least one `TRACK_PITCH` per round, and no corridor can
+    need more tracks than there are edges, so the loop ends; on the shipped examples it
+    settles on the second round.
+    """
     g = theme["geometry"]
     cols = assign_columns(spec)
     n_cols = max(cols.values()) + 1
@@ -581,44 +789,58 @@ def compute(spec, theme):
     widest = [0] * n_cols
     for n in spec["nodes"]:
         widest[cols[n["id"]]] = max(widest[cols[n["id"]]], sizes[n["id"]][0])
-    columns = column_table(theme, widest)
-    canvas_w = canvas_width(theme, columns)
 
     stacks = defaultdict(list)  # (lane, col) -> nodes in spec order
     for n in spec["nodes"]:
         stacks[(n["lane"], cols[n["id"]])].append(n)
+    depth_of = {lane["id"]: max((len(grp) for (lid, _), grp in stacks.items() if lid == lane["id"]), default=0)
+                for lane in spec["lanes"]}
+    lane_order = {l["id"]: i for i, l in enumerate(spec["lanes"])}
 
     def stack_h(group):
         return sum(sizes[n["id"]][1] for n in group) + g["V_GAP"] * (len(group) - 1)
 
-    # lane heights — one pass, because H_NODE is an input. The band follows from
-    # the lane's deepest cell; a deeper cell grows the lane, it never shrinks the shapes.
-    lane_h = {}
-    for lane in spec["lanes"]:
-        depth = max((len(grp) for (lid, _), grp in stacks.items() if lid == lane["id"]), default=0)
-        lane_h[lane["id"]] = lane_height(theme, lane["label"], depth)
+    gutter_need, road_need = {}, {}
+    while True:
+        columns = column_table(theme, widest, gutter_need)
+        canvas_w = canvas_width(theme, columns)
 
-    # pass 2 — lanes stack below the title + legend bars, with a small gap between pools
-    lanes_out = []
-    y = g["TITLE_H"] + g["LEGEND_H"]
-    for lane in spec["lanes"]:
-        lanes_out.append({"id": lane["id"], "label": lane["label"],
-                          "y": y, "h": lane_h[lane["id"]], "w": canvas_w})
-        y += lane_h[lane["id"]] + g["LANE_GAP"]
-    y -= g["LANE_GAP"]
+        # lane heights — one pass, because H_NODE is an input. The band follows
+        # from the lane's deepest cell and its roads; a deeper cell grows the lane, it
+        # never shrinks the shapes.
+        lanes_out = []
+        y = g["TITLE_H"] + g["LEGEND_H"]
+        for lane in spec["lanes"]:
+            road = max(corridor_w(theme), road_need.get(lane["id"], 0))
+            h = lane_height(theme, lane["label"], depth_of[lane["id"]], road)
+            lanes_out.append({"id": lane["id"], "label": lane["label"],
+                              "y": y, "h": h, "w": canvas_w, "road": road})
+            y += h + g["LANE_GAP"]
+        y -= g["LANE_GAP"]
+        lane_h = {l["id"]: l["h"] for l in lanes_out}
 
-    lane_order = {l["id"]: i for i, l in enumerate(spec["lanes"])}
-    nodes_out = []
-    for lid, col in sorted(stacks, key=lambda k: (lane_order[k[0]], k[1])):
-        group = stacks[(lid, col)]
-        x_center = columns[col]["x_left"] + columns[col]["w"] // 2
-        off = (lane_h[lid] - stack_h(group)) // 2
-        for n in group:
-            w, h = sizes[n["id"]]
-            nodes_out.append({"id": n["id"], "lane": lid, "type": n["type"], "label": n["label"],
-                              "col": col, "x": x_center - w // 2, "y": off, "w": w, "h": h,
-                              "step": n.get("step")})
-            off += h + g["V_GAP"]
+        nodes_out = []
+        for lid, col in sorted(stacks, key=lambda k: (lane_order[k[0]], k[1])):
+            group = stacks[(lid, col)]
+            x_center = columns[col]["x_left"] + columns[col]["w"] // 2
+            off = (lane_h[lid] - stack_h(group)) // 2
+            for n in group:
+                w, h = sizes[n["id"]]
+                nodes_out.append({"id": n["id"], "lane": lid, "type": n["type"], "label": n["label"],
+                                  "col": col, "x": x_center - w // 2, "y": off, "w": w, "h": h,
+                                  "step": n.get("step")})
+                off += h + g["V_GAP"]
+
+        edges, depth = _route_edges(spec, nodes_out, lanes_out, cols, columns, theme)
+        grew = False
+        for key, k in depth.items():
+            need = corridor_need(theme, k)
+            store, at = (gutter_need, key[1]) if key[0] == "gutter" else (road_need, key[1])
+            if need > store.get(at, 0):
+                store[at] = need
+                grew = True
+        if not grew:
+            break
 
     # step badges: non-terminal nodes are numbered in flow order (column, then
     # lane); a node carrying an explicit SOP step shows that value verbatim instead, so
@@ -645,6 +867,5 @@ def compute(spec, theme):
     page_w, page_h = page_size(theme, canvas_w, y)
     return {"canvas_w": canvas_w, "canvas_h": y, "lanes": lanes_out, "nodes": nodes_out,
             "cols": cols, "columns": columns, "title_h": g["TITLE_H"],
-            "page_w": page_w, "page_h": page_h,
-            "edges": _route_edges(spec, nodes_out, lanes_out, cols, columns, theme),
+            "page_w": page_w, "page_h": page_h, "edges": edges,
             "legend": {"y": g["TITLE_H"], "h": g["LEGEND_H"], "items": items}}

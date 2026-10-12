@@ -41,7 +41,8 @@ SOP document ──① extract──▶ spec.json ──② lint──▶ ③ la
 2. **Lint** — the spec is checked: dangling references, decisions with a single exit,
    undeclared loops, labels too long to fit. Problems are printed as `E###` / `W###` codes.
 3. **Layout** — pure geometry: columns by longest-path layering, box widths from the label
-   text, and Manhattan routes that run only through the free corridors between boxes.
+   text, and Manhattan routes that run only through the free corridors between boxes. A
+   corridor widens to fit the lines it carries, so parallel lines never share a track.
 4. **Emit** — the computed numbers are written out as draw.io (mxGraph) XML.
 
 ## Quick start
@@ -202,6 +203,13 @@ not a replacement for opening the file in draw.io.
 - A long `start`/`end` label can overflow its fixed-size circle, and no lint code reports it yet.
 - Wide flows (roughly 14 columns and up) do not fit one laptop screen at a readable size. W209 says so;
   splitting the SOP into two flows is the author's call.
+- The two branches leaving a decision can still cross each other near the decision when one
+  branch travels further than the other.
+- A label on a corridor shared by several lines can sit as close to a neighbouring line as to
+  its own, so it is not always obvious which line it names.
+- A label on a very short line can overlap the shapes around it; W208 reports it.
+- An arrow entering a `document` shape from below stops at the shape's box, just under its
+  wavy bottom edge.
 
 ## License
 

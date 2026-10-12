@@ -486,12 +486,38 @@ def _stress_spec():
     }
 
 
+def _crowd_spec():
+    """Four handoffs leave one node for four lanes below, in the same next column — more
+    runs through one column boundary than the baseline gutter carries."""
+    lanes = [{"id": c, "label": c.upper()} for c in "abcde"]
+    nodes = [{"id": "s", "lane": "a", "type": "start", "label": "S"},
+             {"id": "x", "lane": "a", "type": "task", "label": "Split"}]
+    edges = [{"from": "s", "to": "x"}]
+    for c in "bcde":
+        nodes.append({"id": f"y{c}", "lane": c, "type": "task", "label": f"Do {c}"})
+        edges.append({"from": "x", "to": f"y{c}"})
+    nodes.append({"id": "z", "lane": "e", "type": "end", "label": "Z"})
+    edges += [{"from": f"y{c}", "to": "z"} for c in "bcde"]
+    return {"meta": {"sop_id": "CROWD", "title": "One gutter, four runs"},
+            "lanes": lanes, "nodes": nodes, "edges": edges}
+
+
+def _cross(p, q, a, b):
+    """True if a vertical and a horizontal segment cross strictly inside both."""
+    if (p[0] == q[0]) == (a[0] == b[0]):
+        return False
+    (v1, v2), (h1, h2) = ((p, q), (a, b)) if p[0] == q[0] else ((a, b), (p, q))
+    return (min(h1[0], h2[0]) < v1[0] < max(h1[0], h2[0])
+            and min(v1[1], v2[1]) < h1[1] < max(v1[1], v2[1]))
+
+
 class TestRouting(unittest.TestCase):
     """Routing assertions over every example plus a stress fixture."""
 
     # every committed example plus the stress fixture
     CASES = {p.name: json.loads(p.read_text("utf-8")) for p in sorted((ROOT / "examples").glob("*.spec.json"))}
     CASES["stress"] = _stress_spec()
+    CASES["crowd"] = _crowd_spec()
 
     def layouts(self):
         for name, spec in self.CASES.items():
@@ -598,31 +624,160 @@ class TestRouting(unittest.TestCase):
     def test_w204_stacked_decisions(self):
         self.assertIn("W204", codes(_stress_spec()))
 
-    def test_corridors_stay_free_in_every_shipped_theme(self):
-        """The clearance is part of the column width's *definition*, so this asserts
-        the definition rather than one theme's numbers — per column, per theme. A test
-        can only speak for the specs in `examples/`, not for the SOP an author writes
-        tomorrow; the definition is what covers that one."""
+    def test_every_run_keeps_kerb_from_every_other_node(self):
+        """A corridor is as wide as its own traffic, so the clearance is
+        part of the width's *definition* — this asserts the definition, per theme, rather
+        than one theme's numbers. Every segment of every edge keeps `KERB` from every node
+        that is not one of its own endpoints. A test can only speak for the specs in
+        `examples/` and the fixtures, which is why the property is built into the column
+        width rather than checked here alone."""
         for path in sorted((ROOT / "themes").glob("*.json")):
-            with self.subTest(theme=path.stem):
-                th = themes.load(path.stem)
-                g = th["geometry"]
-                road = layout.corridor_w(th)
-                track = max(abs(o) for o in layout.slots(th))
-                # a road carries its tracks and still keeps KERB at each edge
-                self.assertLessEqual(2 * track + 2 * g["KERB"], road,
-                                     "a road no longer holds its own tracks")
-                for name, spec, lay in self.layouts():
-                    by_col = defaultdict(list)
-                    for n in lay["nodes"]:
-                        by_col[n["col"]].append(n)
-                    for c, col in enumerate(lay["columns"]):
-                        widest = max(n["w"] for n in by_col[c]) if by_col[c] else 0
-                        # a node is centred, so its edge sits (COL_W - w)/2 right of the
-                        # boundary; a run rides that boundary offset by at most one track
-                        self.assertGreaterEqual((col["w"] - widest) / 2 - track, g["KERB"],
-                                                f"{name} column {c}: a vertical run comes "
-                                                f"within {g['KERB']} px of a node")
+            th = themes.load(path.stem)
+            kerb = th["geometry"]["KERB"]
+            for name, spec in self.CASES.items():
+                with self.subTest(theme=path.stem, spec=name):
+                    lay = layout.compute(spec, th)
+                    boxes = self._boxes(lay)
+                    for e in lay["edges"]:
+                        for p, q in zip(e["path"], e["path"][1:]):
+                            lo_x, hi_x = sorted((p[0], q[0]))
+                            lo_y, hi_y = sorted((p[1], q[1]))
+                            for nid, (bx, by, bw, bh) in boxes.items():
+                                if nid in (e["from"], e["to"]):
+                                    continue
+                                near = (bx - kerb < hi_x and bx + bw + kerb > lo_x
+                                        and by - kerb < hi_y and by + bh + kerb > lo_y)
+                                self.assertFalse(near, f"{name}: {e['from']}->{e['to']} {p}-{q} "
+                                                       f"comes within {kerb} px of '{nid}'")
+
+    def test_no_two_runs_share_a_line(self):
+        """Two parallel segments of different edges that overlap along
+        their length are at least `TRACK_PITCH` apart. An earlier version reused a corridor's slots
+        cyclically once they ran out and shipped two runs drawn exactly on top of each
+        other; a corridor now widens instead, so this holds at any depth."""
+        pitch = THEME["geometry"]["TRACK_PITCH"]
+        for name, _spec, lay in self.layouts():
+            segs = [(f"{e['from']}->{e['to']}", p, q)
+                    for e in lay["edges"] for p, q in zip(e["path"], e["path"][1:])]
+            for i, (ea, p, q) in enumerate(segs):
+                for eb, a, b in segs[i + 1:]:
+                    if ea != eb:
+                        self.assertFalse(layout._parallel_close(p, q, a, b, pitch),
+                                         f"{name}: {ea} {p}-{q} runs within {pitch} px of {eb} {a}-{b}")
+
+    def test_a_crowded_gutter_widens_instead_of_overlapping(self):
+        """Overlap depth sizes the corridor. The crowd fixture sends four
+        runs through one column boundary; the column beside it grows by the tracks they
+        need, and the uncrowded spec of the same shape keeps the baseline width."""
+        crowd = _crowd_spec()
+        lay = layout.compute(crowd, THEME)
+        boundary = lay["columns"][2]["x_left"]
+        runs = {p[0] for e in lay["edges"] for p, q in zip(e["path"], e["path"][1:])
+                if p[0] == q[0] and abs(p[0] - boundary) <= THEME["geometry"]["TRACK_PITCH"]}
+        self.assertEqual(len(runs), 3, f"expected three runs on the boundary at x={boundary}: {runs}")
+        need = layout.corridor_need(THEME, 3)
+        self.assertGreater(need, layout.corridor_w(THEME))
+        for c in (1, 2):                       # both columns beside the boundary give half each
+            widest = max(n["w"] for n in lay["nodes"] if n["col"] == c)
+            self.assertGreaterEqual(lay["columns"][c]["w"] - widest, need,
+                                    f"column {c} does not leave the crowded gutter its width")
+        self.assertEqual(layout.compute(crowd, THEME), lay, "place-and-route did not settle")
+
+    def test_waypoints_share_an_axis_with_their_ports(self):
+        """The first and last waypoints sit on the axis of the port they leave or
+        reach, to well under a pixel. A port written at a ratio that does not land on the
+        waypoint's pixel leaves a sub-pixel jog that a renderer is free to draw as a hook."""
+        for name, _spec, lay in self.layouts():
+            boxes = self._boxes(lay)
+            for e in lay["edges"]:
+                if not e["points"]:
+                    continue
+                for nid, rel, side, wp in ((e["from"], e["exit"], e["exit_side"], e["points"][0]),
+                                           (e["to"], e["entry"], e["entry_side"], e["points"][-1])):
+                    bx, by, bw, bh = boxes[nid]
+                    ax = 1 if side in ("L", "R") else 0
+                    port = (bx + bw * rel[0], by + bh * rel[1])
+                    self.assertAlmostEqual(port[ax], wp[ax], delta=0.01,
+                                           msg=f"{name}: {e['from']}->{e['to']} waypoint {wp} "
+                                               f"is off its {side} port {port}")
+
+    def test_forward_flow_enters_on_the_face_it_arrives_from(self):
+        """A forward edge from another lane enters its target from above or below —
+        the side facing the source — so it lands in the target lane's road instead of
+        queuing in the target's left gutter with everything else. The left entry remains
+        only where that face is blocked by a stacked node or carries one of the target's
+        own exits."""
+        for name, spec, lay in self.layouts():
+            node = {n["id"]: n for n in lay["nodes"]}
+            order = {l["id"]: i for i, l in enumerate(spec["lanes"])}
+            exits = {(e["from"], e["exit_side"]) for e in lay["edges"]}
+            for e in lay["edges"]:
+                s, t = node[e["from"]], node[e["to"]]
+                if e["kind"] != "normal" or t["col"] <= s["col"] or s["lane"] == t["lane"]:
+                    continue
+                face = "T" if order[t["lane"]] > order[s["lane"]] else "B"
+                stacked = any(o["lane"] == t["lane"] and o["col"] == t["col"] and o is not t
+                              and (o["y"] < t["y"] if face == "T" else o["y"] > t["y"])
+                              for o in lay["nodes"])
+                if e["entry_side"] == "L":
+                    self.assertTrue(stacked or (t["id"], face) in exits,
+                                    f"{name}: {e['from']}->{e['to']} enters left with {face} free")
+                else:
+                    self.assertEqual(e["entry_side"], face, f"{name}: {e['from']}->{e['to']}")
+
+    def test_a_shortcut_clears_every_other_node_by_half_a_corridor(self):
+        """A one-bend shortcut leaves the corridors, so the corridors' guarantee no
+        longer covers it; it is taken only when both legs keep half a baseline corridor
+        from every other node, which this re-measures from the emitted path."""
+        half = layout.corridor_w(THEME) // 2
+        taken = 0
+        for name, _spec, lay in self.layouts():
+            boxes = self._boxes(lay)
+            for e in lay["edges"]:
+                if len(e["points"]) != 1 or (e["exit_side"] in "RL") == (e["entry_side"] in "RL"):
+                    continue
+                taken += 1
+                for p, q in zip(e["path"], e["path"][1:]):
+                    lo_x, hi_x = sorted((p[0], q[0]))
+                    lo_y, hi_y = sorted((p[1], q[1]))
+                    for nid, (bx, by, bw, bh) in boxes.items():
+                        if nid in (e["from"], e["to"]):
+                            continue
+                        self.assertFalse(bx - half < hi_x and bx + bw + half > lo_x
+                                         and by - half < hi_y and by + bh + half > lo_y,
+                                         f"{name}: shortcut {e['from']}->{e['to']} passes within "
+                                         f"{half} px of '{nid}'")
+        self.assertGreater(taken, 0, "no shortcut was taken anywhere — the case is untested")
+
+    def test_port_order_is_chosen_from_the_routed_paths(self):
+        """Port fan-out: where several edges share a face, the order of their ports is
+        the one with the fewest crossings. delivery-dates' two results both enter `n11` from above;
+        ordered by id, `n10a` took the left port and `n10b`'s run crossed it on the way to
+        the right one. Swapping the two ports removes the crossing."""
+        spec = self.CASES["delivery-dates.spec.json"]
+        lay = layout.compute(spec, THEME)
+        into = {e["from"]: e for e in lay["edges"] if e["to"] == "n11"}
+        self.assertLess(into["n10b"]["entry"][0], into["n10a"]["entry"][0],
+                        "the nearer source should take the outer (left) port")
+        a, b = into["n10a"]["path"], into["n10b"]["path"]
+        self.assertFalse(any(_cross(p, q, r, t) for p, q in zip(a, a[1:]) for r, t in zip(b, b[1:])))
+
+    def test_crossings_do_not_regress(self):
+        """Crossings between unrelated edges cannot all be avoided in a real SOP, so their
+        count is a measured budget, not an invariant: it may only go down. A change
+        that lowers one lowers the number here in the same commit; one that raises it fails."""
+        budget = {"delivery-dates.spec.json": 1, "po-confirmation.spec.json": 0,
+                  "booking-change.spec.json": 17, "special-order-shipment.spec.json": 1}
+        for name, _spec, lay in self.layouts():
+            if name not in budget:
+                continue
+            segs = [(i, p, q) for i, e in enumerate(lay["edges"]) for p, q in zip(e["path"], e["path"][1:])]
+            n = 0
+            for k, (i, p, q) in enumerate(segs):
+                for j, a, b in segs[k + 1:]:
+                    if i != j and _cross(p, q, a, b):
+                        n += 1
+            self.assertLessEqual(n, budget[name], f"{name}: {n} crossings, budget {budget[name]}")
 
 
 class TestXml(unittest.TestCase):
@@ -655,13 +810,17 @@ class TestXml(unittest.TestCase):
         xml = gen()
         sides = {(e["from"], e["to"]): (e["exit_side"], e["entry_side"])
                  for e in layout.compute(SPEC, THEME)["edges"]}
-        # main flow reads left to right
-        self.assertEqual(sides[("start", "t1")], ("R", "L"))
-        self.assertEqual(sides[("t2", "end")], ("R", "L"))
+        # main flow reads left to right; a handoff to a lane below lands on the target's
+        # top face, the side it arrives from
+        self.assertEqual(sides[("start", "t1")], ("R", "T"))
+        self.assertEqual(sides[("t2", "end")], ("R", "T"))
+        # arriving from below would take d1's bottom face, but d1 leaves by it — so left
+        self.assertEqual(sides[("t1", "d1")], ("R", "L"))
         # 'Yes' matches the primary-label list, so it is the branch that exits right
         self.assertEqual(sides[("d1", "t2")], ("R", "L"))
-        # the other branch drops out of the bottom and still merges at the target's left
-        self.assertEqual(sides[("d1", "t3")], ("B", "L"))
+        # the other branch drops out of the bottom and, arriving from the lane above,
+        # enters on the face it arrives from
+        self.assertEqual(sides[("d1", "t3")], ("B", "T"))
         # cross-lane feedback merges into the target's LEFT entry point
         self.assertEqual(sides[("t3", "d1")], ("B", "L"))
         self.assertIn('value="Yes"', xml)
