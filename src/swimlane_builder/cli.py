@@ -24,7 +24,10 @@ def _generate(spec_path, out_path, theme_name, validate_only=False):
         print(f"E001: {spec_path}: invalid JSON — {e}", file=sys.stderr)
         return 1
 
-    name = theme_name or (spec.get("meta", {}).get("theme", "default") if isinstance(spec, dict) else "default")
+    # a malformed spec still has to reach the validator, which reports it as E001
+    meta = spec.get("meta") if isinstance(spec, dict) else None
+    spec_theme = meta.get("theme") if isinstance(meta, dict) else None
+    name = theme_name or (spec_theme if isinstance(spec_theme, str) and spec_theme else "default")
     try:
         theme = themes.load(name)
     except OSError as e:

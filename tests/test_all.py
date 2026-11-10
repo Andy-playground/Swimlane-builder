@@ -79,6 +79,30 @@ class TestLint(unittest.TestCase):
         spec["nodes"][0]["bogus"] = 1
         self.assertIn("E001", codes(spec))
 
+    def test_e001_meta_types_match_the_schema(self):
+        """`validate._shape` re-implements schema/spec.schema.json by hand, where
+        `meta.version` and `meta.theme` are strings."""
+        for key in ("version", "theme"):
+            spec = mini()
+            spec["meta"][key] = 5
+            self.assertIn("E001", codes(spec), key)
+
+    def test_malformed_meta_is_a_validation_failure_not_a_crash(self):
+        """The CLI reads `meta.theme` before the validator runs; a spec whose `meta` is
+        not an object must still come out as E001 (exit 1)."""
+        import contextlib
+        import io
+        import tempfile
+        from swimlane_builder import cli
+        with tempfile.TemporaryDirectory() as tmp:
+            for meta in ("x", {"sop_id": "T", "title": "t", "theme": 5}):
+                path = Path(tmp) / "bad.spec.json"
+                path.write_text(json.dumps({**mini(), "meta": meta}), "utf-8")
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(cli.main(["lint", str(path)]), 1, meta)
+                self.assertIn("E001", err.getvalue())
+
     def test_e101_unknown_ref(self):
         self.assertIn("E101", codes(mini(edges=[{"from": "s", "to": "ghost"}])))
 
@@ -890,6 +914,17 @@ class TestXml(unittest.TestCase):
         xml = gen(spec)
         self.assertIn('id="e_s__z"', xml)
         self.assertIn('id="e_s__z_2"', xml)
+
+    def test_edge_ids_are_unique(self):
+        """A parallel edge's ordinal suffix must not land on an id another edge owns:
+        s->z twice beside s->z_2 used to emit `e_s__z_2` twice."""
+        spec = mini(nodes=[{"id": "s", "lane": "a", "type": "start", "label": "S"},
+                           {"id": "z", "lane": "a", "type": "end", "label": "Z"},
+                           {"id": "z_2", "lane": "a", "type": "end", "label": "Z"}],
+                    edges=[{"from": "s", "to": "z"}, {"from": "s", "to": "z_2"},
+                           {"from": "s", "to": "z"}])
+        ids = [c.get("id") for c in ET.fromstring(gen(spec)).iter("mxCell")]
+        self.assertEqual(len(ids), len(set(ids)))
 
     def test_every_shipped_theme_pins_the_font(self):
         """The text-width metric is meaningless unless the file pins the font it

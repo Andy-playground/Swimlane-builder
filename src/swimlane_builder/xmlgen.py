@@ -97,13 +97,17 @@ def emit(spec, lay, theme):
             a(f'          <mxGeometry x="{bx}" y="{by}" width="{bd}" height="{bd}" as="geometry"/>')
             a("        </mxCell>")
 
-    counts = {}
+    # parallel edges take an ordinal suffix; `used` keeps that suffix off an id another
+    # edge already owns (a->b twice beside a->b_2 would otherwise emit `e_a__b_2` twice)
+    used = set()
     for e in lay["edges"]:
         style = theme["edge_style"] + theme["edge_channels"][e["channel"]] + _ports(e)
-        eid = f'e_{e["from"]}__{e["to"]}'
-        counts[eid] = counts.get(eid, 0) + 1
-        if counts[eid] > 1:
-            eid = f"{eid}_{counts[eid]}"
+        base = eid = f'e_{e["from"]}__{e["to"]}'
+        n = 1
+        while eid in used:
+            n += 1
+            eid = f"{base}_{n}"
+        used.add(eid)
         value = f' value="{_esc(e["label"])}"' if e["label"] else ""
         a(f'        <mxCell id="{eid}"{value} style="{style}" edge="1" parent="1" source="n_{e["from"]}" target="n_{e["to"]}">')
         # geometry x positions the label along the edge (-1 source .. 1 target); layout

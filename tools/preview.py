@@ -14,7 +14,9 @@ substitute for the manual draw.io check before regenerating a golden.
 """
 import argparse
 import html
+import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -31,6 +33,7 @@ CHROMIUM_CANDIDATES = [
     "/opt/pw-browsers/chromium/chrome-linux/chrome",
     "chromium", "chromium-browser", "google-chrome",
 ]
+CHROMIUM_TIMEOUT = 120      # seconds
 JETTY = 20
 CORNER = 8
 
@@ -381,9 +384,24 @@ def to_png(svg, out, w, h, scale=1.0):
         cmd = [chrome, "--headless", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
                f"--force-device-scale-factor={scale}", f"--window-size={w + 20},{h + 160}",
                f"--screenshot={out}", f"--user-data-dir={tmp}/profile", page.as_uri()]
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        # A headless browser that never exits used to hang the tool with no output. Its
+        # stderr goes to a file, not a pipe, and it runs in its own process group: the
+        # browser's helper processes inherit a pipe and would keep a timed-out wait blocked.
+        log = Path(tmp) / "chromium.log"
+        with open(log, "w") as err:
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True)
+            try:
+                proc.wait(timeout=CHROMIUM_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    proc.kill()
+                proc.wait()
+                print(f"chromium did not finish within {CHROMIUM_TIMEOUT} s; wrote SVG only", file=sys.stderr)
+                return False
         if not Path(out).exists():
-            print(r.stderr[-2000:], file=sys.stderr)
+            print(log.read_text(errors="replace")[-2000:], file=sys.stderr)
             return False
     return True
 
