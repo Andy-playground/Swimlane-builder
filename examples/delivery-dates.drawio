@@ -216,21 +216,19 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="e_n8__n8a" value="Yes" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontFamily=Helvetica;fontSize=14;jettySize=auto;jumpStyle=arc;jumpSize=6;strokeWidth=2;strokeColor=#0066CC;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="n_n8" target="n_n8a">
-          <mxGeometry x="0.818" relative="1" as="geometry">
+        <mxCell id="e_n8__n8a" value="Yes" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontFamily=Helvetica;fontSize=14;jettySize=auto;jumpStyle=arc;jumpSize=6;strokeWidth=2;strokeColor=#0066CC;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="n_n8" target="n_n8a">
+          <mxGeometry x="-0.017" relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="1394" y="280"/>
-              <mxPoint x="1394" y="742"/>
-              <mxPoint x="1470" y="742"/>
+              <mxPoint x="1400" y="280"/>
+              <mxPoint x="1400" y="815"/>
             </Array>
+            <mxPoint x="-23" y="0" as="offset"/>
           </mxGeometry>
         </mxCell>
         <mxCell id="e_n8__n8b" value="No" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontFamily=Helvetica;fontSize=14;jettySize=auto;jumpStyle=arc;jumpSize=6;strokeWidth=2;strokeColor=#0066CC;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="n_n8" target="n_n8b">
-          <mxGeometry x="0.279" relative="1" as="geometry">
+          <mxGeometry x="0.079" relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="1345" y="418"/>
-              <mxPoint x="1406" y="418"/>
-              <mxPoint x="1406" y="442"/>
+              <mxPoint x="1345" y="442"/>
               <mxPoint x="1470" y="442"/>
             </Array>
           </mxGeometry>

@@ -337,6 +337,8 @@ def _parallel_close(p, q, a, b, gap):
     return False
 
 
+FACING = {("R", "L"), ("L", "R"), ("B", "T"), ("T", "B")}    # faces that look at each other
+ALIGN_MIN = 0.25        # a lone port slides no nearer a corner than a 3-edge fan-out puts one
 FAN_SEARCH_MAX = 4      # ports on one face whose orders are all tried (4! = 24)
 
 
@@ -400,10 +402,14 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
     """Explicit Manhattan paths. Returns `(edges, depth)` — the routed edges, and the
     overlap depth of every corridor, which the column table and lane heights are sized from.
 
-    Two kinds of path, and both keep clear of every node by construction:
+    An edge takes the first of these that is available, so it never turns more often than
+    its two faces and the nodes around it require — and all of them keep clear of every node:
+    - **straight** — no bend; a port alone on its face slides to face the other end;
     - a **shortcut** — one bend, straight from the exit face to the entry face — taken
       only when both of its segments clear every other node by half a baseline corridor
       and no other shortcut runs alongside it;
+    - a **dogleg** — two bends, one corridor run joined to both ports by straight legs,
+      under the same clearance test;
     - otherwise a **corridor path**: vertical runs on column boundaries, horizontal runs in
       a lane's roads, both free of nodes because the column and lane sizes make them so.
     """
@@ -483,7 +489,7 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
             exits.append("R")
     exit_faces = {(e["from"], ex) for e, ex in zip(spec["edges"], exits)}
 
-    sides = []
+    sides, arrivals = [], []
     for e, ex in zip(spec["edges"], exits):
         s, t = e["from"], e["to"]
         ls, lt = lane_i[node[s]["lane"]], lane_i[node[t]["lane"]]
@@ -497,14 +503,16 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
                 face = "T" if lt > ls else "B"
                 if not blocked(t, face) and (t, face) not in exit_faces:
                     en = face
+                    arrivals.append(len(sides))
         sides.append((ex, en))
 
     # ---- 2. fan-out: several edges on one face attach at distinct points (i/(k+1))
-    groups = defaultdict(list)
-    for i, (e, (ex, en)) in enumerate(zip(spec["edges"], sides)):
-        groups[(e["from"], ex, "out")].append((node[e["to"]]["col"], lane_i[node[e["to"]]["lane"]], e["to"], i))
-        groups[(e["to"], en, "in")].append((node[e["from"]]["col"], lane_i[node[e["from"]]["lane"]], e["from"], i))
-    order = {key: [m[-1] for m in sorted(members)] for key, members in groups.items()}
+    def fan_order():
+        groups = defaultdict(list)
+        for i, (e, (ex, en)) in enumerate(zip(spec["edges"], sides)):
+            groups[(e["from"], ex, "out")].append((node[e["to"]]["col"], lane_i[node[e["to"]]["lane"]], e["to"], i))
+            groups[(e["to"], en, "in")].append((node[e["from"]]["col"], lane_i[node[e["from"]]["lane"]], e["from"], i))
+        return {key: [m[-1] for m in sorted(members)] for key, members in groups.items()}
 
     def ratios(order):
         out = {}
@@ -512,6 +520,7 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
             k = len(members)
             for j, i in enumerate(members):
                 out[(i, kind)] = round(0.5 if k == 1 else (j + 1) / (k + 1), 3)
+                out[(i, kind, "alone")] = k == 1
         return out
 
     def port(nid, side, r):
@@ -541,6 +550,24 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
             entry_r, N = port(t, en, ratio[(i, "in")])
             clear = others(s, t)
 
+            # alignment — faces that look at each other, ports on different lines: an end
+            # that is alone on its face slides to face the other, so the hop is straight
+            if (ex, en) in FACING:
+                ax = 1 if ex in "RL" else 0             # the axis the two ports must share
+                if E[ax] != N[ax] and (N[1 - ax] > E[1 - ax]) == (ex in "RB"):
+                    for nid, side, kind, here, there in ((t, en, "in", N, E), (s, ex, "out", E, N)):
+                        r = (there[ax] - boxes[nid][ax]) / boxes[nid][ax + 2]
+                        if not ratio[(i, kind, "alone")] or not ALIGN_MIN <= r <= 1 - ALIGN_MIN:
+                            continue
+                        rel, pt = port(nid, side, r)
+                        if _crosses(clear, *((E, pt) if kind == "in" else (pt, N))):
+                            continue
+                        if kind == "in":
+                            entry_r, N = rel, pt
+                        else:
+                            exit_r, E = rel, pt
+                        break
+
             # straight shot — the common left-to-right hop needs no waypoints at all
             if ((ex in "RL" and en in "RL" and E[1] == N[1]) or (ex in "TB" and en in "TB" and E[0] == N[0])) \
                     and not _crosses(clear, E, N):
@@ -569,6 +596,34 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
             b_val = col_edge(t, en) if b_kind == "x" else band(t, en)
             if a_val.key == b_val.key:                  # one shared corridor, one run
                 b_val = a_val
+
+            # dogleg — two bends, when the faces are parallel and their corridors differ:
+            # one run in one of the two corridors, joined to both ports by straight legs.
+            # The run keeps its corridor's guarantees and its track; the leg that leaves the
+            # corridors is tested exactly as a shortcut's legs are.
+            if a_kind == b_kind and a_val is not b_val:
+                ax = 0 if a_kind == "x" else 1          # the axis the run's corridor fixes
+                fat = [(bx - clearance, by - clearance, bw + 2 * clearance, bh + 2 * clearance)
+                       for bx, by, bw, bh in clear]
+                taken = None
+                for run in (b_val, a_val):               # the target's corridor first
+                    r = run.base
+                    if (r > E[ax]) != (ex in "RB") or (N[ax] > r) != (en in "LT") or r in (E[ax], N[ax]):
+                        continue
+                    P = (r, E[1]) if ax == 0 else (E[0], r)
+                    Q = (r, N[1]) if ax == 0 else (N[0], r)
+                    legs = [(E, P), (Q, N)]
+                    if any(_crosses(fat, p, q) for p, q in legs) or \
+                            any(_parallel_close(p, q, a, b, g["TRACK_PITCH"]) for p, q in legs for a, b in shortcuts):
+                        continue
+                    taken = run
+                    break
+                if taken is not None:
+                    shortcuts.extend(legs)
+                    A = (taken, E[1]) if ax == 0 else (E[0], taken)
+                    B = (taken, N[1]) if ax == 0 else (N[0], taken)
+                    raw.append((e, s, t, exit_r, entry_r, ex, en, E, N, [A, B]))
+                    continue
             A = (a_val, E[1]) if a_kind == "x" else (E[0], a_val)
             B = (b_val, N[1]) if b_kind == "x" else (N[0], b_val)
 
@@ -628,7 +683,28 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
     # run's far end does not say where it arrives from — a feedback loop that wraps round
     # through a gutter arrives from the opposite side — so the order is judged on the
     # routed paths themselves. Ties keep the (column, lane, id) order.
+    order = fan_order()
     edges_out, depth = build(ratios(order))
+
+    def bends(edges):
+        return sum(len(e["points"]) for e in edges)
+
+    # ---- 4b. the arrival face is kept only where it is not the longer way round: an
+    # edge that entered from above or below and still needed three bends (its shortcut
+    # was not clear) is re-routed into the left face, and that is kept when the diagram
+    # ends up with fewer bends and no more crossings. Judged on the routed paths, like 5.
+    for i in arrivals:
+        if len(edges_out[i]["points"]) < 3:
+            continue
+        kept = sides[i]
+        sides[i] = (kept[0], "L")
+        trial = fan_order()
+        cand, cand_depth = build(ratios(trial))
+        if bends(cand) < bends(edges_out) and _crossings(cand) <= _crossings(edges_out):
+            order, edges_out, depth = trial, cand, cand_depth
+        else:
+            sides[i] = kept
+
     best = _crossings(edges_out)
     for key in sorted(order, key=repr):
         members = order[key]

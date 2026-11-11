@@ -729,8 +729,9 @@ class TestRouting(unittest.TestCase):
         """A forward edge from another lane enters its target from above or below —
         the side facing the source — so it lands in the target lane's road instead of
         queuing in the target's left gutter with everything else. The left entry remains
-        only where that face is blocked by a stacked node or carries one of the target's
-        own exits."""
+        where that face is blocked by a stacked node or carries one of the target's own
+        exits — or where entering it is the shorter way round: the arrival face would
+        have cost three bends and the left face costs at most two."""
         for name, spec, lay in self.layouts():
             node = {n["id"]: n for n in lay["nodes"]}
             order = {l["id"]: i for i, l in enumerate(spec["lanes"])}
@@ -744,7 +745,7 @@ class TestRouting(unittest.TestCase):
                               and (o["y"] < t["y"] if face == "T" else o["y"] > t["y"])
                               for o in lay["nodes"])
                 if e["entry_side"] == "L":
-                    self.assertTrue(stacked or (t["id"], face) in exits,
+                    self.assertTrue(stacked or (t["id"], face) in exits or len(e["points"]) <= 2,
                                     f"{name}: {e['from']}->{e['to']} enters left with {face} free")
                 else:
                     self.assertEqual(e["entry_side"], face, f"{name}: {e['from']}->{e['to']}")
@@ -785,6 +786,61 @@ class TestRouting(unittest.TestCase):
                         "the nearer source should take the outer (left) port")
         a, b = into["n10a"]["path"], into["n10b"]["path"]
         self.assertFalse(any(_cross(p, q, r, t) for p, q in zip(a, a[1:]) for r, t in zip(b, b[1:])))
+
+    def test_parallel_faces_in_different_corridors_take_one_run(self):
+        """A branch leaving by the bottom into the top of a node in the next
+        lane used to ride both lanes' roads and the gutter between them — four bends for a
+        24 px step. It takes one run, and the leg that leaves the corridors keeps the
+        shortcut's clearance from every node that is not an endpoint."""
+        lay = layout.compute(SPEC, THEME)
+        down = next(e for e in lay["edges"] if (e["exit_side"], e["entry_side"]) == ("B", "T")
+                    and len(e["path"]) > 2)
+        self.assertEqual(len(down["points"]), 2, down["path"])
+        half = layout.corridor_w(THEME) // 2
+        taken = 0
+        for name, _spec, lay in self.layouts():
+            boxes = self._boxes(lay)
+            for e in lay["edges"]:
+                vertical = e["exit_side"] in "TB"
+                if len(e["points"]) != 2 or vertical != (e["entry_side"] in "TB"):
+                    continue
+                taken += 1
+                fat = [(x - half, y - half, w + 2 * half, h + 2 * half)
+                       for nid, (x, y, w, h) in boxes.items() if nid not in (e["from"], e["to"])]
+                for p, q in (e["path"][:2], e["path"][-2:]):
+                    self.assertFalse(layout._crosses(fat, p, q),
+                                     f"{name}: {e['from']}->{e['to']} leg {p}-{q} within {half} px of a node")
+        self.assertGreater(taken, 0)
+
+    def test_a_lone_port_slides_to_face_its_neighbour(self):
+        """Fan-out moves a port off the centre line, and a neighbour whose
+        own port is alone on its face used to stay on it — a two-bend jog between two
+        boxes standing side by side. The lone port moves; the hop is straight."""
+        spec = mini(
+            nodes=[{"id": "s", "lane": "a", "type": "start", "label": "S"},
+                   {"id": "t1", "lane": "a", "type": "task", "label": "One"},
+                   {"id": "t2", "lane": "a", "type": "task", "label": "Two"},
+                   {"id": "t3", "lane": "b", "type": "task", "label": "Three"},
+                   {"id": "z", "lane": "b", "type": "end", "label": "Z"}],
+            edges=[{"from": "s", "to": "t1"}, {"from": "t1", "to": "t2"}, {"from": "t1", "to": "t3"},
+                   {"from": "t2", "to": "t3"}, {"from": "t3", "to": "z"}])
+        spec["lanes"].append({"id": "b", "label": "B"})
+        lay = layout.compute(spec, THEME)
+        hop = next(e for e in lay["edges"] if (e["from"], e["to"]) == ("t1", "t2"))
+        self.assertNotEqual(hop["exit"][1], 0.5, "fixture no longer fans t1's right face out")
+        self.assertEqual(hop["points"], [])
+        self.assertEqual(hop["path"][0][1], hop["path"][-1][1])
+
+    def test_bends_do_not_regress(self):
+        """An edge turns no more often than its faces and the nodes around it
+        require. Like crossings, the total is held to what each example last shipped
+        with — a change may lower it, never raise it."""
+        budget = {"delivery-dates.spec.json": 23, "po-confirmation.spec.json": 9,
+                  "booking-change.spec.json": 37, "special-order-shipment.spec.json": 14}
+        for name, _spec, lay in self.layouts():
+            if name in budget:
+                n = sum(len(e["points"]) for e in lay["edges"])
+                self.assertLessEqual(n, budget[name], f"{name}: {n} bends, budget {budget[name]}")
 
     def test_crossings_do_not_regress(self):
         """Crossings between unrelated edges cannot all be avoided in a real SOP, so their
