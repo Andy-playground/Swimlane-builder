@@ -65,7 +65,8 @@ Download `swimlane-builder-skill.zip` from the [latest release](https://github.c
 there), or build the same bytes yourself:
 
 ```bash
-python3 tools/build_skill.py        # → dist/swimlane-builder-skill.zip + its sha256
+python3 tools/build_skill.py          # → dist/swimlane-builder-skill.zip + its sha256 (Claude: SKILL.md in a folder)
+python3 tools/build_skill.py --flat   # → dist/swimlane-builder-skill-flat.zip (Microsoft 365 Copilot: SKILL.md at the root)
 ```
 
 Upload the zip to Claude as a Skill, or unzip it as plain context files for any other agent.
