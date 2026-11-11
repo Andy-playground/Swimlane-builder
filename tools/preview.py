@@ -28,9 +28,13 @@ from swimlane_builder import layout, themes  # noqa: E402  — dev tool, after t
 
 THEME = themes.load()
 
+# The headless shell first: it is the build made for `--screenshot`, and a full Chrome of
+# the same vintage can sit on that flag without ever exiting. Playwright's install
+# directory carries a build number, so it is globbed rather than pinned to one.
 CHROMIUM_CANDIDATES = [
-    "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
-    "/opt/pw-browsers/chromium/chrome-linux/chrome",
+    *sorted(str(p) for p in Path("/opt/pw-browsers").glob("chromium_headless_shell-*/*/chrome-headless-shell")),
+    "chrome-headless-shell",
+    *sorted(str(p) for p in Path("/opt/pw-browsers").glob("chromium-*/chrome-linux*/chrome")),
     "chromium", "chromium-browser", "google-chrome",
 ]
 CHROMIUM_TIMEOUT = 120      # seconds
