@@ -347,8 +347,13 @@ def edge_svg(sv, c, cells):
         label = html.escape(html.unescape(c["value"]))
         size = float(st.get("fontSize", 11))
         w = text_width(label, size) + 8
-        sv.append(f'<rect x="{mx - w / 2:.1f}" y="{my - size / 2 - 3:.1f}" width="{w:.1f}" '
-                  f'height="{size + 6:.1f}" fill="#ffffff" fill-opacity="0.92"/>')
+        # the background the file asks for, not one of preview's own: without
+        # `labelBackgroundColor` draw.io strikes the line through the text, and a preview
+        # that always painted a white box hid exactly that
+        bg = st.get("labelBackgroundColor")
+        if bg and bg != "none":
+            sv.append(f'<rect x="{mx - w / 2:.1f}" y="{my - size / 2 - 3:.1f}" width="{w:.1f}" '
+                      f'height="{size + 6:.1f}" fill="{"#ffffff" if bg == "default" else bg}"/>')
         sv.append(f'<text x="{mx:.1f}" y="{my + size / 3:.1f}" font-family="Helvetica,Arial,sans-serif" '
                   f'font-size="{size:.0f}" text-anchor="middle">{label}</text>')
 

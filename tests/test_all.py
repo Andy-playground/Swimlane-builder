@@ -559,19 +559,63 @@ class TestRouting(unittest.TestCase):
         suite means each label was either verified clear or its spec was warned. There is
         no third state, which is what stops a silent overlap from shipping."""
         for name, spec, lay in self.layouts():
-            boxes = list(self._boxes(lay).values())
+            boxes = self._boxes(lay)
+            kind = {n["id"]: n["type"] for n in lay["nodes"]}
             placed = []
             for e in lay["edges"]:
                 if not e["label"] or not e.get("label_clear", True):
-                    continue                       # reported W208, the one allowed overlap
+                    continue                       # reported W208; clause 4 allows the overlap
                 box = _label_box(e, THEME)
-                for b in boxes:
-                    self.assertFalse(_hit(box, b),
+                for nid, b in boxes.items():       # a decision is the diamond it is drawn as
+                    self.assertFalse(layout._covers(kind[nid], b, box),
                                      f"{name}: label '{e['label']}' ({e['from']}->{e['to']}) covers a node")
                 for other, ob in placed:
                     self.assertFalse(_hit(box, ob),
                                      f"{name}: labels '{e['label']}' and '{other}' overlap")
                 placed.append((e["label"], box))
+
+    def test_no_label_covers_another_edges_line_or_a_badge(self):
+        """A label that lies across three runs names none of
+        them. Every placed label clears every segment of every *other* edge and every step
+        badge — unless its spec raised W208."""
+        r = THEME["geometry"]["BADGE_R"]
+        for name, spec, lay in self.layouts():
+            boxes = self._boxes(lay)
+            kind = {n["id"]: n["type"] for n in lay["nodes"]}
+            badges = [(x - r, y + h - r, 2 * r, 2 * r) for nid, (x, y, w, h) in boxes.items()
+                      if kind[nid] not in ("start", "end")]
+            for k, e in enumerate(lay["edges"]):
+                if not e["label"] or not e.get("label_clear", True):
+                    continue
+                box = _label_box(e, THEME)
+                for b in badges:
+                    self.assertFalse(_hit(box, b), f"{name}: label '{e['label']}' covers a step badge")
+                for j, o in enumerate(lay["edges"]):
+                    if j == k:
+                        continue
+                    for p, q in zip(o["path"], o["path"][1:]):
+                        seg = (min(p[0], q[0]), min(p[1], q[1]), abs(q[0] - p[0]) or 0.01, abs(q[1] - p[1]) or 0.01)
+                        self.assertFalse(_hit(box, seg),
+                                         f"{name}: label '{e['label']}' ({e['from']}->{e['to']}) "
+                                         f"lies across {o['from']}->{o['to']}")
+
+    def test_a_branch_label_sits_beside_its_decision(self):
+        """A decision's branches part at the decision and merge into shared
+        roads soon after, so that is where the label has to be read. Every clear branch
+        label is nearer its decision than its target — on a path long enough to choose."""
+        for name, spec, lay in self.layouts():
+            kind = {n["id"]: n["type"] for n in lay["nodes"]}
+            for e in lay["edges"]:
+                long_enough = sum(abs(b[0] - a[0]) + abs(b[1] - a[1])
+                                  for a, b in zip(e["path"], e["path"][1:])) > 200
+                if e["label"] and kind[e["from"]] == "decision" and e.get("label_clear", True) and long_enough:
+                    self.assertLess(e["label_pos"], 0, f"{name}: '{e['label']}' ({e['from']}->{e['to']})")
+
+    def test_the_line_breaks_for_its_label(self):
+        """A label sits on its own line, so the edge style must carry a label
+        background — without one draw.io strikes the line through the text."""
+        for name in ("default", "classic"):
+            self.assertIn("labelBackgroundColor=", themes.load(name)["edge_style"], name)
 
     def test_w208_is_reported_whenever_a_label_could_not_be_placed(self):
         """The generator never shortens a label — it draws it at candidate (a) and

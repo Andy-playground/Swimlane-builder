@@ -73,7 +73,7 @@ def emit(spec, lay, theme):
             a(f'          <mxGeometry x="{it["x"] + 18}" y="17" width="64" height="36" as="geometry"/>')
             a("        </mxCell>")
         else:
-            a(f'        <mxCell id="legend_line_{it["key"]}" value="{_esc(labels[it["key"]])}" style="html=1;fontSize=8;strokeWidth={_stroke_w(theme["edge_style"])};{theme["edge_channels"][it["key"]]}" edge="1" parent="legend">')
+            a(f'        <mxCell id="legend_line_{it["key"]}" value="{_esc(labels[it["key"]])}" style="html=1;fontSize=8;strokeWidth={_stroke_w(theme["edge_style"])};labelBackgroundColor=#ffffff;{theme["edge_channels"][it["key"]]}" edge="1" parent="legend">')
             a('          <mxGeometry relative="1" as="geometry">')
             a(f'            <mxPoint x="{it["x"] + 10}" y="45" as="sourcePoint"/>')
             a(f'            <mxPoint x="{it["x"] + 90}" y="45" as="targetPoint"/>')

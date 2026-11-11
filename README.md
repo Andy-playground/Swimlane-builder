@@ -205,8 +205,6 @@ not a replacement for opening the file in draw.io.
   splitting the SOP into two flows is the author's call.
 - The two branches leaving a decision can still cross each other near the decision when one
   branch travels further than the other.
-- A label on a corridor shared by several lines can sit as close to a neighbouring line as to
-  its own, so it is not always obvious which line it names.
 - A label on a very short line can overlap the shapes around it; W208 reports it.
 - An arrow entering a `document` shape from below stops at the shape's box, just under its
   wavy bottom edge.
