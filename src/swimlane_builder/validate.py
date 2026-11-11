@@ -221,6 +221,9 @@ def _shape(spec, issues):
     meta = spec["meta"]
     if not s(meta.get("sop_id")) or not s(meta.get("title")):
         err("meta.sop_id and meta.title are required non-empty strings")
+    for key in ("version", "theme"):
+        if key in meta and not isinstance(meta[key], str):
+            err(f"meta.{key} must be a string")
     if unknown := set(meta) - {"sop_id", "title", "version", "theme"}:
         err(f"unknown meta keys {sorted(unknown)}")
 

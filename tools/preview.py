@@ -14,7 +14,9 @@ substitute for the manual draw.io check before regenerating a golden.
 """
 import argparse
 import html
+import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -26,11 +28,16 @@ from swimlane_builder import layout, themes  # noqa: E402  — dev tool, after t
 
 THEME = themes.load()
 
+# The headless shell first: it is the build made for `--screenshot`, and a full Chrome of
+# the same vintage can sit on that flag without ever exiting. Playwright's install
+# directory carries a build number, so it is globbed rather than pinned to one.
 CHROMIUM_CANDIDATES = [
-    "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
-    "/opt/pw-browsers/chromium/chrome-linux/chrome",
+    *sorted(str(p) for p in Path("/opt/pw-browsers").glob("chromium_headless_shell-*/*/chrome-headless-shell")),
+    "chrome-headless-shell",
+    *sorted(str(p) for p in Path("/opt/pw-browsers").glob("chromium-*/chrome-linux*/chrome")),
     "chromium", "chromium-browser", "google-chrome",
 ]
+CHROMIUM_TIMEOUT = 120      # seconds
 JETTY = 20
 CORNER = 8
 
@@ -340,8 +347,13 @@ def edge_svg(sv, c, cells):
         label = html.escape(html.unescape(c["value"]))
         size = float(st.get("fontSize", 11))
         w = text_width(label, size) + 8
-        sv.append(f'<rect x="{mx - w / 2:.1f}" y="{my - size / 2 - 3:.1f}" width="{w:.1f}" '
-                  f'height="{size + 6:.1f}" fill="#ffffff" fill-opacity="0.92"/>')
+        # the background the file asks for, not one of preview's own: without
+        # `labelBackgroundColor` draw.io strikes the line through the text, and a preview
+        # that always painted a white box hid exactly that
+        bg = st.get("labelBackgroundColor")
+        if bg and bg != "none":
+            sv.append(f'<rect x="{mx - w / 2:.1f}" y="{my - size / 2 - 3:.1f}" width="{w:.1f}" '
+                      f'height="{size + 6:.1f}" fill="{"#ffffff" if bg == "default" else bg}"/>')
         sv.append(f'<text x="{mx:.1f}" y="{my + size / 3:.1f}" font-family="Helvetica,Arial,sans-serif" '
                   f'font-size="{size:.0f}" text-anchor="middle">{label}</text>')
 
@@ -381,9 +393,24 @@ def to_png(svg, out, w, h, scale=1.0):
         cmd = [chrome, "--headless", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
                f"--force-device-scale-factor={scale}", f"--window-size={w + 20},{h + 160}",
                f"--screenshot={out}", f"--user-data-dir={tmp}/profile", page.as_uri()]
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        # A headless browser that never exits used to hang the tool with no output. Its
+        # stderr goes to a file, not a pipe, and it runs in its own process group: the
+        # browser's helper processes inherit a pipe and would keep a timed-out wait blocked.
+        log = Path(tmp) / "chromium.log"
+        with open(log, "w") as err:
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True)
+            try:
+                proc.wait(timeout=CHROMIUM_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    proc.kill()
+                proc.wait()
+                print(f"chromium did not finish within {CHROMIUM_TIMEOUT} s; wrote SVG only", file=sys.stderr)
+                return False
         if not Path(out).exists():
-            print(r.stderr[-2000:], file=sys.stderr)
+            print(log.read_text(errors="replace")[-2000:], file=sys.stderr)
             return False
     return True
 

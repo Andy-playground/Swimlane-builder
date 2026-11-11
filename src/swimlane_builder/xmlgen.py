@@ -73,7 +73,7 @@ def emit(spec, lay, theme):
             a(f'          <mxGeometry x="{it["x"] + 18}" y="17" width="64" height="36" as="geometry"/>')
             a("        </mxCell>")
         else:
-            a(f'        <mxCell id="legend_line_{it["key"]}" value="{_esc(labels[it["key"]])}" style="html=1;fontSize=8;strokeWidth={_stroke_w(theme["edge_style"])};{theme["edge_channels"][it["key"]]}" edge="1" parent="legend">')
+            a(f'        <mxCell id="legend_line_{it["key"]}" value="{_esc(labels[it["key"]])}" style="html=1;fontSize=8;strokeWidth={_stroke_w(theme["edge_style"])};labelBackgroundColor=#ffffff;{theme["edge_channels"][it["key"]]}" edge="1" parent="legend">')
             a('          <mxGeometry relative="1" as="geometry">')
             a(f'            <mxPoint x="{it["x"] + 10}" y="45" as="sourcePoint"/>')
             a(f'            <mxPoint x="{it["x"] + 90}" y="45" as="targetPoint"/>')
@@ -97,13 +97,17 @@ def emit(spec, lay, theme):
             a(f'          <mxGeometry x="{bx}" y="{by}" width="{bd}" height="{bd}" as="geometry"/>')
             a("        </mxCell>")
 
-    counts = {}
+    # parallel edges take an ordinal suffix; `used` keeps that suffix off an id another
+    # edge already owns (a->b twice beside a->b_2 would otherwise emit `e_a__b_2` twice)
+    used = set()
     for e in lay["edges"]:
         style = theme["edge_style"] + theme["edge_channels"][e["channel"]] + _ports(e)
-        eid = f'e_{e["from"]}__{e["to"]}'
-        counts[eid] = counts.get(eid, 0) + 1
-        if counts[eid] > 1:
-            eid = f"{eid}_{counts[eid]}"
+        base = eid = f'e_{e["from"]}__{e["to"]}'
+        n = 1
+        while eid in used:
+            n += 1
+            eid = f"{base}_{n}"
+        used.add(eid)
         value = f' value="{_esc(e["label"])}"' if e["label"] else ""
         a(f'        <mxCell id="{eid}"{value} style="{style}" edge="1" parent="1" source="n_{e["from"]}" target="n_{e["to"]}">')
         # geometry x positions the label along the edge (-1 source .. 1 target); layout

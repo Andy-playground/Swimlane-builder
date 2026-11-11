@@ -79,6 +79,30 @@ class TestLint(unittest.TestCase):
         spec["nodes"][0]["bogus"] = 1
         self.assertIn("E001", codes(spec))
 
+    def test_e001_meta_types_match_the_schema(self):
+        """`validate._shape` re-implements schema/spec.schema.json by hand, where
+        `meta.version` and `meta.theme` are strings."""
+        for key in ("version", "theme"):
+            spec = mini()
+            spec["meta"][key] = 5
+            self.assertIn("E001", codes(spec), key)
+
+    def test_malformed_meta_is_a_validation_failure_not_a_crash(self):
+        """The CLI reads `meta.theme` before the validator runs; a spec whose `meta` is
+        not an object must still come out as E001 (exit 1)."""
+        import contextlib
+        import io
+        import tempfile
+        from swimlane_builder import cli
+        with tempfile.TemporaryDirectory() as tmp:
+            for meta in ("x", {"sop_id": "T", "title": "t", "theme": 5}):
+                path = Path(tmp) / "bad.spec.json"
+                path.write_text(json.dumps({**mini(), "meta": meta}), "utf-8")
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(cli.main(["lint", str(path)]), 1, meta)
+                self.assertIn("E001", err.getvalue())
+
     def test_e101_unknown_ref(self):
         self.assertIn("E101", codes(mini(edges=[{"from": "s", "to": "ghost"}])))
 
@@ -535,19 +559,63 @@ class TestRouting(unittest.TestCase):
         suite means each label was either verified clear or its spec was warned. There is
         no third state, which is what stops a silent overlap from shipping."""
         for name, spec, lay in self.layouts():
-            boxes = list(self._boxes(lay).values())
+            boxes = self._boxes(lay)
+            kind = {n["id"]: n["type"] for n in lay["nodes"]}
             placed = []
             for e in lay["edges"]:
                 if not e["label"] or not e.get("label_clear", True):
-                    continue                       # reported W208, the one allowed overlap
+                    continue                       # reported W208; clause 4 allows the overlap
                 box = _label_box(e, THEME)
-                for b in boxes:
-                    self.assertFalse(_hit(box, b),
+                for nid, b in boxes.items():       # a decision is the diamond it is drawn as
+                    self.assertFalse(layout._covers(kind[nid], b, box),
                                      f"{name}: label '{e['label']}' ({e['from']}->{e['to']}) covers a node")
                 for other, ob in placed:
                     self.assertFalse(_hit(box, ob),
                                      f"{name}: labels '{e['label']}' and '{other}' overlap")
                 placed.append((e["label"], box))
+
+    def test_no_label_covers_another_edges_line_or_a_badge(self):
+        """A label that lies across three runs names none of
+        them. Every placed label clears every segment of every *other* edge and every step
+        badge — unless its spec raised W208."""
+        r = THEME["geometry"]["BADGE_R"]
+        for name, spec, lay in self.layouts():
+            boxes = self._boxes(lay)
+            kind = {n["id"]: n["type"] for n in lay["nodes"]}
+            badges = [(x - r, y + h - r, 2 * r, 2 * r) for nid, (x, y, w, h) in boxes.items()
+                      if kind[nid] not in ("start", "end")]
+            for k, e in enumerate(lay["edges"]):
+                if not e["label"] or not e.get("label_clear", True):
+                    continue
+                box = _label_box(e, THEME)
+                for b in badges:
+                    self.assertFalse(_hit(box, b), f"{name}: label '{e['label']}' covers a step badge")
+                for j, o in enumerate(lay["edges"]):
+                    if j == k:
+                        continue
+                    for p, q in zip(o["path"], o["path"][1:]):
+                        seg = (min(p[0], q[0]), min(p[1], q[1]), abs(q[0] - p[0]) or 0.01, abs(q[1] - p[1]) or 0.01)
+                        self.assertFalse(_hit(box, seg),
+                                         f"{name}: label '{e['label']}' ({e['from']}->{e['to']}) "
+                                         f"lies across {o['from']}->{o['to']}")
+
+    def test_a_branch_label_sits_beside_its_decision(self):
+        """A decision's branches part at the decision and merge into shared
+        roads soon after, so that is where the label has to be read. Every clear branch
+        label is nearer its decision than its target — on a path long enough to choose."""
+        for name, spec, lay in self.layouts():
+            kind = {n["id"]: n["type"] for n in lay["nodes"]}
+            for e in lay["edges"]:
+                long_enough = sum(abs(b[0] - a[0]) + abs(b[1] - a[1])
+                                  for a, b in zip(e["path"], e["path"][1:])) > 200
+                if e["label"] and kind[e["from"]] == "decision" and e.get("label_clear", True) and long_enough:
+                    self.assertLess(e["label_pos"], 0, f"{name}: '{e['label']}' ({e['from']}->{e['to']})")
+
+    def test_the_line_breaks_for_its_label(self):
+        """A label sits on its own line, so the edge style must carry a label
+        background — without one draw.io strikes the line through the text."""
+        for name in ("default", "classic"):
+            self.assertIn("labelBackgroundColor=", themes.load(name)["edge_style"], name)
 
     def test_w208_is_reported_whenever_a_label_could_not_be_placed(self):
         """The generator never shortens a label — it draws it at candidate (a) and
@@ -705,8 +773,9 @@ class TestRouting(unittest.TestCase):
         """A forward edge from another lane enters its target from above or below —
         the side facing the source — so it lands in the target lane's road instead of
         queuing in the target's left gutter with everything else. The left entry remains
-        only where that face is blocked by a stacked node or carries one of the target's
-        own exits."""
+        where that face is blocked by a stacked node or carries one of the target's own
+        exits — or where entering it is the shorter way round: the arrival face would
+        have cost three bends and the left face costs at most two."""
         for name, spec, lay in self.layouts():
             node = {n["id"]: n for n in lay["nodes"]}
             order = {l["id"]: i for i, l in enumerate(spec["lanes"])}
@@ -720,7 +789,7 @@ class TestRouting(unittest.TestCase):
                               and (o["y"] < t["y"] if face == "T" else o["y"] > t["y"])
                               for o in lay["nodes"])
                 if e["entry_side"] == "L":
-                    self.assertTrue(stacked or (t["id"], face) in exits,
+                    self.assertTrue(stacked or (t["id"], face) in exits or len(e["points"]) <= 2,
                                     f"{name}: {e['from']}->{e['to']} enters left with {face} free")
                 else:
                     self.assertEqual(e["entry_side"], face, f"{name}: {e['from']}->{e['to']}")
@@ -761,6 +830,61 @@ class TestRouting(unittest.TestCase):
                         "the nearer source should take the outer (left) port")
         a, b = into["n10a"]["path"], into["n10b"]["path"]
         self.assertFalse(any(_cross(p, q, r, t) for p, q in zip(a, a[1:]) for r, t in zip(b, b[1:])))
+
+    def test_parallel_faces_in_different_corridors_take_one_run(self):
+        """A branch leaving by the bottom into the top of a node in the next
+        lane used to ride both lanes' roads and the gutter between them — four bends for a
+        24 px step. It takes one run, and the leg that leaves the corridors keeps the
+        shortcut's clearance from every node that is not an endpoint."""
+        lay = layout.compute(SPEC, THEME)
+        down = next(e for e in lay["edges"] if (e["exit_side"], e["entry_side"]) == ("B", "T")
+                    and len(e["path"]) > 2)
+        self.assertEqual(len(down["points"]), 2, down["path"])
+        half = layout.corridor_w(THEME) // 2
+        taken = 0
+        for name, _spec, lay in self.layouts():
+            boxes = self._boxes(lay)
+            for e in lay["edges"]:
+                vertical = e["exit_side"] in "TB"
+                if len(e["points"]) != 2 or vertical != (e["entry_side"] in "TB"):
+                    continue
+                taken += 1
+                fat = [(x - half, y - half, w + 2 * half, h + 2 * half)
+                       for nid, (x, y, w, h) in boxes.items() if nid not in (e["from"], e["to"])]
+                for p, q in (e["path"][:2], e["path"][-2:]):
+                    self.assertFalse(layout._crosses(fat, p, q),
+                                     f"{name}: {e['from']}->{e['to']} leg {p}-{q} within {half} px of a node")
+        self.assertGreater(taken, 0)
+
+    def test_a_lone_port_slides_to_face_its_neighbour(self):
+        """Fan-out moves a port off the centre line, and a neighbour whose
+        own port is alone on its face used to stay on it — a two-bend jog between two
+        boxes standing side by side. The lone port moves; the hop is straight."""
+        spec = mini(
+            nodes=[{"id": "s", "lane": "a", "type": "start", "label": "S"},
+                   {"id": "t1", "lane": "a", "type": "task", "label": "One"},
+                   {"id": "t2", "lane": "a", "type": "task", "label": "Two"},
+                   {"id": "t3", "lane": "b", "type": "task", "label": "Three"},
+                   {"id": "z", "lane": "b", "type": "end", "label": "Z"}],
+            edges=[{"from": "s", "to": "t1"}, {"from": "t1", "to": "t2"}, {"from": "t1", "to": "t3"},
+                   {"from": "t2", "to": "t3"}, {"from": "t3", "to": "z"}])
+        spec["lanes"].append({"id": "b", "label": "B"})
+        lay = layout.compute(spec, THEME)
+        hop = next(e for e in lay["edges"] if (e["from"], e["to"]) == ("t1", "t2"))
+        self.assertNotEqual(hop["exit"][1], 0.5, "fixture no longer fans t1's right face out")
+        self.assertEqual(hop["points"], [])
+        self.assertEqual(hop["path"][0][1], hop["path"][-1][1])
+
+    def test_bends_do_not_regress(self):
+        """An edge turns no more often than its faces and the nodes around it
+        require. Like crossings, the total is held to what each example last shipped
+        with — a change may lower it, never raise it."""
+        budget = {"delivery-dates.spec.json": 23, "po-confirmation.spec.json": 9,
+                  "booking-change.spec.json": 37, "special-order-shipment.spec.json": 14}
+        for name, _spec, lay in self.layouts():
+            if name in budget:
+                n = sum(len(e["points"]) for e in lay["edges"])
+                self.assertLessEqual(n, budget[name], f"{name}: {n} bends, budget {budget[name]}")
 
     def test_crossings_do_not_regress(self):
         """Crossings between unrelated edges cannot all be avoided in a real SOP, so their
@@ -890,6 +1014,17 @@ class TestXml(unittest.TestCase):
         xml = gen(spec)
         self.assertIn('id="e_s__z"', xml)
         self.assertIn('id="e_s__z_2"', xml)
+
+    def test_edge_ids_are_unique(self):
+        """A parallel edge's ordinal suffix must not land on an id another edge owns:
+        s->z twice beside s->z_2 used to emit `e_s__z_2` twice."""
+        spec = mini(nodes=[{"id": "s", "lane": "a", "type": "start", "label": "S"},
+                           {"id": "z", "lane": "a", "type": "end", "label": "Z"},
+                           {"id": "z_2", "lane": "a", "type": "end", "label": "Z"}],
+                    edges=[{"from": "s", "to": "z"}, {"from": "s", "to": "z_2"},
+                           {"from": "s", "to": "z"}])
+        ids = [c.get("id") for c in ET.fromstring(gen(spec)).iter("mxCell")]
+        self.assertEqual(len(ids), len(set(ids)))
 
     def test_every_shipped_theme_pins_the_font(self):
         """The text-width metric is meaningless unless the file pins the font it

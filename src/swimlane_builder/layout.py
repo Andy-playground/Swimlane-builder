@@ -337,6 +337,8 @@ def _parallel_close(p, q, a, b, gap):
     return False
 
 
+FACING = {("R", "L"), ("L", "R"), ("B", "T"), ("T", "B")}    # faces that look at each other
+ALIGN_MIN = 0.25        # a lone port slides no nearer a corner than a 3-edge fan-out puts one
 FAN_SEARCH_MAX = 4      # ports on one face whose orders are all tried (4! = 24)
 
 
@@ -400,10 +402,14 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
     """Explicit Manhattan paths. Returns `(edges, depth)` — the routed edges, and the
     overlap depth of every corridor, which the column table and lane heights are sized from.
 
-    Two kinds of path, and both keep clear of every node by construction:
+    An edge takes the first of these that is available, so it never turns more often than
+    its two faces and the nodes around it require — and all of them keep clear of every node:
+    - **straight** — no bend; a port alone on its face slides to face the other end;
     - a **shortcut** — one bend, straight from the exit face to the entry face — taken
       only when both of its segments clear every other node by half a baseline corridor
       and no other shortcut runs alongside it;
+    - a **dogleg** — two bends, one corridor run joined to both ports by straight legs,
+      under the same clearance test;
     - otherwise a **corridor path**: vertical runs on column boundaries, horizontal runs in
       a lane's roads, both free of nodes because the column and lane sizes make them so.
     """
@@ -483,7 +489,7 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
             exits.append("R")
     exit_faces = {(e["from"], ex) for e, ex in zip(spec["edges"], exits)}
 
-    sides = []
+    sides, arrivals = [], []
     for e, ex in zip(spec["edges"], exits):
         s, t = e["from"], e["to"]
         ls, lt = lane_i[node[s]["lane"]], lane_i[node[t]["lane"]]
@@ -497,14 +503,16 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
                 face = "T" if lt > ls else "B"
                 if not blocked(t, face) and (t, face) not in exit_faces:
                     en = face
+                    arrivals.append(len(sides))
         sides.append((ex, en))
 
     # ---- 2. fan-out: several edges on one face attach at distinct points (i/(k+1))
-    groups = defaultdict(list)
-    for i, (e, (ex, en)) in enumerate(zip(spec["edges"], sides)):
-        groups[(e["from"], ex, "out")].append((node[e["to"]]["col"], lane_i[node[e["to"]]["lane"]], e["to"], i))
-        groups[(e["to"], en, "in")].append((node[e["from"]]["col"], lane_i[node[e["from"]]["lane"]], e["from"], i))
-    order = {key: [m[-1] for m in sorted(members)] for key, members in groups.items()}
+    def fan_order():
+        groups = defaultdict(list)
+        for i, (e, (ex, en)) in enumerate(zip(spec["edges"], sides)):
+            groups[(e["from"], ex, "out")].append((node[e["to"]]["col"], lane_i[node[e["to"]]["lane"]], e["to"], i))
+            groups[(e["to"], en, "in")].append((node[e["from"]]["col"], lane_i[node[e["from"]]["lane"]], e["from"], i))
+        return {key: [m[-1] for m in sorted(members)] for key, members in groups.items()}
 
     def ratios(order):
         out = {}
@@ -512,6 +520,7 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
             k = len(members)
             for j, i in enumerate(members):
                 out[(i, kind)] = round(0.5 if k == 1 else (j + 1) / (k + 1), 3)
+                out[(i, kind, "alone")] = k == 1
         return out
 
     def port(nid, side, r):
@@ -541,6 +550,24 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
             entry_r, N = port(t, en, ratio[(i, "in")])
             clear = others(s, t)
 
+            # alignment — faces that look at each other, ports on different lines: an end
+            # that is alone on its face slides to face the other, so the hop is straight
+            if (ex, en) in FACING:
+                ax = 1 if ex in "RL" else 0             # the axis the two ports must share
+                if E[ax] != N[ax] and (N[1 - ax] > E[1 - ax]) == (ex in "RB"):
+                    for nid, side, kind, here, there in ((t, en, "in", N, E), (s, ex, "out", E, N)):
+                        r = (there[ax] - boxes[nid][ax]) / boxes[nid][ax + 2]
+                        if not ratio[(i, kind, "alone")] or not ALIGN_MIN <= r <= 1 - ALIGN_MIN:
+                            continue
+                        rel, pt = port(nid, side, r)
+                        if _crosses(clear, *((E, pt) if kind == "in" else (pt, N))):
+                            continue
+                        if kind == "in":
+                            entry_r, N = rel, pt
+                        else:
+                            exit_r, E = rel, pt
+                        break
+
             # straight shot — the common left-to-right hop needs no waypoints at all
             if ((ex in "RL" and en in "RL" and E[1] == N[1]) or (ex in "TB" and en in "TB" and E[0] == N[0])) \
                     and not _crosses(clear, E, N):
@@ -569,6 +596,34 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
             b_val = col_edge(t, en) if b_kind == "x" else band(t, en)
             if a_val.key == b_val.key:                  # one shared corridor, one run
                 b_val = a_val
+
+            # dogleg — two bends, when the faces are parallel and their corridors differ:
+            # one run in one of the two corridors, joined to both ports by straight legs.
+            # The run keeps its corridor's guarantees and its track; the leg that leaves the
+            # corridors is tested exactly as a shortcut's legs are.
+            if a_kind == b_kind and a_val is not b_val:
+                ax = 0 if a_kind == "x" else 1          # the axis the run's corridor fixes
+                fat = [(bx - clearance, by - clearance, bw + 2 * clearance, bh + 2 * clearance)
+                       for bx, by, bw, bh in clear]
+                taken = None
+                for run in (b_val, a_val):               # the target's corridor first
+                    r = run.base
+                    if (r > E[ax]) != (ex in "RB") or (N[ax] > r) != (en in "LT") or r in (E[ax], N[ax]):
+                        continue
+                    P = (r, E[1]) if ax == 0 else (E[0], r)
+                    Q = (r, N[1]) if ax == 0 else (N[0], r)
+                    legs = [(E, P), (Q, N)]
+                    if any(_crosses(fat, p, q) for p, q in legs) or \
+                            any(_parallel_close(p, q, a, b, g["TRACK_PITCH"]) for p, q in legs for a, b in shortcuts):
+                        continue
+                    taken = run
+                    break
+                if taken is not None:
+                    shortcuts.extend(legs)
+                    A = (taken, E[1]) if ax == 0 else (E[0], taken)
+                    B = (taken, N[1]) if ax == 0 else (N[0], taken)
+                    raw.append((e, s, t, exit_r, entry_r, ex, en, E, N, [A, B]))
+                    continue
             A = (a_val, E[1]) if a_kind == "x" else (E[0], a_val)
             B = (b_val, N[1]) if b_kind == "x" else (N[0], b_val)
 
@@ -628,7 +683,28 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
     # run's far end does not say where it arrives from — a feedback loop that wraps round
     # through a gutter arrives from the opposite side — so the order is judged on the
     # routed paths themselves. Ties keep the (column, lane, id) order.
+    order = fan_order()
     edges_out, depth = build(ratios(order))
+
+    def bends(edges):
+        return sum(len(e["points"]) for e in edges)
+
+    # ---- 4b. the arrival face is kept only where it is not the longer way round: an
+    # edge that entered from above or below and still needed three bends (its shortcut
+    # was not clear) is re-routed into the left face, and that is kept when the diagram
+    # ends up with fewer bends and no more crossings. Judged on the routed paths, like 5.
+    for i in arrivals:
+        if len(edges_out[i]["points"]) < 3:
+            continue
+        kept = sides[i]
+        sides[i] = (kept[0], "L")
+        trial = fan_order()
+        cand, cand_depth = build(ratios(trial))
+        if bends(cand) < bends(edges_out) and _crossings(cand) <= _crossings(edges_out):
+            order, edges_out, depth = trial, cand, cand_depth
+        else:
+            sides[i] = kept
+
     best = _crossings(edges_out)
     for key in sorted(order, key=repr):
         members = order[key]
@@ -643,28 +719,7 @@ def _route_edges(spec, nodes_out, lanes_out, cols, columns, theme):
             if n < best:
                 best, order, edges_out, depth = n, trial, cand, cand_depth
 
-    def free_side(nid):
-        return "T" if not blocked(nid, "T") else "B"
-
-    return _place_labels(edges_out, boxes, node, theme, free_side), depth
-
-
-def _seg_lengths(path):
-    return [abs(b[0] - a[0]) + abs(b[1] - a[1]) for a, b in zip(path, path[1:])]
-
-
-def _pos_along(path, seg_i):
-    """draw.io's label anchor scale: −1 at the source, +1 at the target.
-
-    The anchor is always a segment midpoint, so this is the arc length up to that
-    midpoint over the total, mapped onto [−1, 1] and rounded for byte stability.
-    """
-    lens = _seg_lengths(path)
-    total = sum(lens)
-    if not total:
-        return 0.0
-    upto = sum(lens[:seg_i]) + lens[seg_i] / 2
-    return round(2 * upto / total - 1, 3)
+    return _place_labels(edges_out, boxes, node, theme), depth
 
 
 def _rects_hit(a, b):
@@ -672,87 +727,129 @@ def _rects_hit(a, b):
             and a[1] < b[1] + b[3] and b[1] < a[1] + a[3])
 
 
-def _place_labels(edges_out, boxes, node, theme, free_side):
-    """Computed label placement. A label has a position *and an extent*.
+def _covers(ntype, nbox, box):
+    """True if `box` touches the node's **visible shape**. A rhombus leaves the corners
+    of its bounding box empty, and that is where a draughtsman tucks `Yes` and `No`, so
+    a decision is tested as the diamond it is drawn as; every other shape as its box."""
+    if not _rects_hit(box, nbox):
+        return False
+    if ntype != "decision":
+        return True
+    cx, cy = nbox[0] + nbox[2] / 2, nbox[1] + nbox[3] / 2
+    dx = max(box[0] - cx, 0, cx - (box[0] + box[2]))    # the box's nearest point to the centre
+    dy = max(box[1] - cy, 0, cy - (box[1] + box[3]))
+    return dx / (nbox[2] / 2) + dy / (nbox[3] / 2) < 1
 
-    One fixed anchor for every branch label cannot work: draw.io centres a label on its
-    anchor, so even `Yes` would overlap its decision, because the exit stub is shorter
-    than half the label. So candidates are generated from the edge's own path — roads
-    first, then offset off the road, then beside the vertical runs, then beside the exit
-    stub — and the first whose box clears every node and every label already placed
-    wins. If none clears, candidate (a) is used and the edge is flagged for W208.
+
+LABEL_STEP = 5          # px between the anchors tried along a path
+LABEL_TRIES = 40        # ... but never fewer anchors than this on a path, down to every pixel
+LINE_HALF = 2           # half the width a line is given when a label is tested against it
+
+
+def _place_labels(edges_out, boxes, node, theme):
+    """Computed label placement. A label has a position *and an extent*, and
+    it is placed the way a draughtsman places one — so that a reader can tell which line
+    it belongs to:
+
+    - it sits **on its own line**, which breaks for the text (the edge style carries a
+      label background), or directly beside it. On the line nothing can be nearer to it
+      than the line it names, which is what keeps it legible inside a bundle of runs;
+    - it touches **no node, no other label and no other edge's line**;
+    - a decision's branch label sits **as near the decision as it can** — where the
+      branches have just parted and before they merge into a shared road; any other
+      label sits as near the middle of its path as it can.
+
+    Anchors are tried every `LABEL_STEP` px along the edge's own path, in that order of
+    preference, and the first whose box is clear wins. Nothing clear ⇒ the anchor that
+    covers least (a node costs more than a label, a label more than a line), and W208.
     """
     g = theme["geometry"]
     h = g["LINE_H"]
     clear = g["LABEL_CLEAR"]
     placed = []                                    # label boxes already on the sheet
-    node_boxes = list(boxes.values())
+    shapes = [(node[nid]["type"], b) for nid, b in boxes.items()]
+    r = g["BADGE_R"]                               # a step badge is drawn over its node's corner
+    shapes += [("badge", (bx - r, by + bh - r, 2 * r, 2 * r)) for nid, (bx, by, bw, bh) in boxes.items()
+               if node[nid]["type"] not in ("start", "end")]
 
-    for e in edges_out:
+    def lines(skip_edge):
+        """Every segment of every other edge, as a thin box."""
+        out = []
+        for k, o in enumerate(edges_out):
+            for a, b in zip(o["path"], o["path"][1:]):
+                if k == skip_edge:
+                    continue
+                out.append((min(a[0], b[0]) - LINE_HALF, min(a[1], b[1]) - LINE_HALF,
+                            abs(b[0] - a[0]) + 2 * LINE_HALF, abs(b[1] - a[1]) + 2 * LINE_HALF))
+        return out
+
+    for k, e in enumerate(edges_out):
         e["label_offset"] = None
         e["label_wide"] = False
+        e["label_pos"] = None
         if not e["label"]:
-            e["label_pos"] = None
             continue
         w = text_width(e["label"], theme) + 2 * g["LABEL_PAD"]
         e["label_wide"] = w > g["LABEL_W_MAX"]
         path = e["path"]
         segs = list(zip(path, path[1:]))
-        mid = [((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in segs]
-        horiz = sorted((i for i, (a, b) in enumerate(segs) if a[1] == b[1] and a[0] != b[0]),
-                       key=lambda i: (-abs(segs[i][1][0] - segs[i][0][0]), i))
-        vert = sorted((i for i, (a, b) in enumerate(segs) if a[0] == b[0] and a[1] != b[1]),
-                      key=lambda i: (-abs(segs[i][1][1] - segs[i][0][1]), i))
+        lens = [abs(b[0] - a[0]) + abs(b[1] - a[1]) for a, b in segs]
+        total = sum(lens)
+        if not total:
+            continue
         sx, sy, sw, sh = boxes[e["from"]]
 
-        def gap_above(pt):
-            """Clearance from a point up to the nearest node box overlapping the label's
-            x-range — which of the two roads' neighbours a perpendicular offset should
-            move away from."""
-            xs = [b for b in node_boxes if b[0] < pt[0] + w / 2 and pt[0] - w / 2 < b[0] + b[2]]
-            over = [pt[1] - (b[1] + b[3]) for b in xs if b[1] + b[3] <= pt[1]]
-            return min(over) if over else 10 ** 6
+        # where along the path to look first
+        home = 0 if node[e["from"]]["type"] == "decision" else total / 2
+        step = max(1, min(LABEL_STEP, int(total) // LABEL_TRIES))    # a short hop is searched finely
+        steps = sorted(range(0, int(total) + 1, step), key=lambda d: (abs(d - home), d))
 
-        def gap_below(pt):
-            xs = [b for b in node_boxes if b[0] < pt[0] + w / 2 and pt[0] - w / 2 < b[0] + b[2]]
-            under = [b[1] - pt[1] for b in xs if b[1] >= pt[1]]
-            return min(under) if under else 10 ** 6
+        cands = []                                  # (arc length, segment, (dx, dy), kept inside its segment)
+        for d in steps:
+            run = 0
+            for i, ln in enumerate(lens):
+                if ln and d <= run + ln:
+                    break
+                run += ln
+            along = d - run
+            horizontal = segs[i][0][1] == segs[i][1][1]
+            need = (w if horizontal else h) / 2     # the label's half-extent along its segment
+            inside = need <= along <= lens[i] - need
+            if horizontal:
+                side = h / 2 + clear                # on the line, then above and below it,
+                offs = [(0.0, 0.0), (0.0, -side), (0.0, side),          # one gap away, then two
+                        (0.0, -side - clear), (0.0, side + clear)]
+            else:
+                side = w / 2 + clear
+                away = side if segs[i][0][0] > sx + sw / 2 else -side   # away from the source's column
+                offs = [(0.0, 0.0), (away, 0.0), (-away, 0.0)]
+            cands += [(d, i, off, inside) for off in offs]
 
-        cands = []                                  # (segment index, (dx, dy))
-        for i in horiz:                             # (a) on a horizontal run, no offset
-            cands.append((i, (0.0, 0.0)))
-        for i in horiz:                             # (b) ... offset off the road, roomier side first
-            d = h / 2 + clear
-            first = -d if gap_above(mid[i]) >= gap_below(mid[i]) else d
-            cands += [(i, (0.0, first)), (i, (0.0, -first))]
-        for i in vert:                              # (c) beside a vertical run, away from the source column
-            d = w / 2 + clear
-            first = -d if segs[i][0][0] <= sx + sw / 2 else d
-            cands += [(i, (first, 0.0)), (i, (-first, 0.0))]
-        if segs:                                    # (d) beside the exit stub, clear of the source node
-            up = (sy - clear - h / 2) - mid[0][1]
-            down = (sy + sh + clear + h / 2) - mid[0][1]
-            # a stub leaving by the top or bottom has its label on that side; a label on the
-            # far side of the node from its own line reads as belonging to another edge
-            first = e["exit_side"] if e["exit_side"] in ("T", "B") else free_side(e["from"])
-            cands += [(0, (0.0, up if first == "T" else down)),
-                      (0, (0.0, down if first == "T" else up))]
-        if not cands:
-            e["label_pos"] = None
-            continue
+        def box_at(c):
+            d, i, (dx, dy), _ = c
+            (ax, ay), (bx, by) = segs[i]
+            f = (d - sum(lens[:i])) / lens[i]
+            return (ax + (bx - ax) * f + dx - w / 2, ay + (by - ay) * f + dy - h / 2, w, h)
 
-        def box_at(cand):
-            i, (dx, dy) = cand
-            return (mid[i][0] + dx - w / 2, mid[i][1] + dy - h / 2, w, h)
+        others = lines(skip_edge=k)
+        own = [(min(a[0], b[0]) - LINE_HALF, min(a[1], b[1]) - LINE_HALF,
+                abs(b[0] - a[0]) + 2 * LINE_HALF, abs(b[1] - a[1]) + 2 * LINE_HALF) for a, b in segs]
 
-        chosen = next((c for c in cands
-                       if not any(_rects_hit(box_at(c), b) for b in node_boxes)
-                       and not any(_rects_hit(box_at(c), b) for b in placed)), None)
+        def damage(c):
+            """(nodes, labels, other edges' lines, own other segments) the box touches."""
+            b = box_at(c)
+            return (sum(_covers(t, n, b) for t, n in shapes), sum(_rects_hit(b, q) for q in placed),
+                    sum(_rects_hit(b, r) for r in others),
+                    sum(_rects_hit(b, r) for j, r in enumerate(own) if j != c[1]))
+
+        chosen = next((c for c in cands if c[3] and damage(c) == (0, 0, 0, 0)), None)
+        if chosen is None:                          # a path too short to hold the label on one segment
+            chosen = next((c for c in cands if damage(c)[:3] == (0, 0, 0)), None)
         e["label_clear"] = chosen is not None
-        if chosen is None:
-            chosen = cands[0]                       # fall back to (a); lint reports W208
-        i, (dx, dy) = chosen
-        e["label_pos"] = _pos_along(path, i)
+        if chosen is None:                          # the least-covering anchor, and W208
+            chosen = min(cands, key=damage)
+        d, i, (dx, dy), _ = chosen
+        e["label_pos"] = round(2 * d / total - 1, 4)
         e["label_offset"] = (round(dx), round(dy)) if (dx or dy) else None
         placed.append(box_at(chosen))
     return edges_out

@@ -46,7 +46,7 @@
     "document": "shape=document;whiteSpace=wrap;html=1;boundedLbl=1;fontFamily=Helvetica;fontSize=14;fillColor=#ffffff;strokeColor=#666666;strokeWidth=2;"
   },
   "lane_fills": ["#f5f5f5", "#ffffff"],
-  "edge_style": "edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontFamily=Helvetica;fontSize=14;jettySize=auto;jumpStyle=arc;jumpSize=6;strokeWidth=2;",
+  "edge_style": "edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontFamily=Helvetica;fontSize=14;jettySize=auto;jumpStyle=arc;jumpSize=6;strokeWidth=2;labelBackgroundColor=#ffffff;",
   "edge_channels": {
     "offline": "",
     "system": "strokeColor=#0066CC;",
