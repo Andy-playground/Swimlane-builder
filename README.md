@@ -9,7 +9,7 @@ input always gives the same picture.**
 </p>
 
 <p align="center">
-  <a href="docs/media/swimlane-builder-showreel.mp4"><b>▶ Watch the 30-second overview</b></a>
+  <a href="docs/media/swimlane-builder-showreel.mp4"><b>▶ Watch the 30-second overview</b></a> (with sound)
   &nbsp;·&nbsp;
   <a href="https://github.com/Andy-playground/Swimlane-builder/releases/latest"><b>Download the latest release</b></a>
   &nbsp;·&nbsp;

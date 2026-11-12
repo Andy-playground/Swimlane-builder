@@ -4,8 +4,9 @@
 The film is tools/showreel/film.html, a page whose picture is a pure function of time.
 This script fills it with the layout the generator computes for the PO-confirmation
 example, then steps a headless Chromium through it frame by frame and encodes the
-frames with ffmpeg. Needs Node with Playwright, Chromium, ffmpeg and the Inter font;
-none of this is part of the runtime.
+frames with ffmpeg, together with the soundtrack that music.py synthesizes. Needs Node
+with Playwright, Chromium, ffmpeg, numpy and the Inter font; none of this is part of the
+runtime.
 
     python3 tools/showreel/render.py                    # → docs/media/swimlane-builder-showreel.mp4
     python3 tools/showreel/render.py --stills 2 7 14    # PNG stills at those seconds, for review
@@ -54,7 +55,10 @@ def main(argv=None):
             cmd += ["--stills", a.stills_dir, *map(str, a.stills)]
         else:
             Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-            cmd += ["--video", a.out, str(FPS)]
+            track = Path(tmp) / "soundtrack.wav"
+            subprocess.run([sys.executable, str(HERE / "music.py"), str(track)], check=True,
+                           stdout=subprocess.DEVNULL)
+            cmd += ["--video", a.out, str(FPS), str(track)]
         return subprocess.run(cmd).returncode
 
 

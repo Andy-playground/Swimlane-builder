@@ -221,6 +221,11 @@ const out = x => 1 - Math.pow(1 - x, 4);                     // entrances: fast 
 const inOut = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;   // things already on screen
 const $ = id => document.getElementById(id);
 
+// The film is cut to its music: 128 beats a minute makes 30 seconds exactly 16 bars.
+// b(n) is the time of beat n, counted from 0, so b(8) is the downbeat of bar 3. Keep BPM
+// in step with tools/showreel/music.py.
+const BPM = 128, b = n => n * 60 / BPM;
+
 // fade + rise in at `a`, fade out at `b` (no travel on the way out)
 function show(el, t, a, b, { rise = 14, din = 0.9, dout = 0.45, max = 1 } = {}) {
   const i = out(span(t, a, din)), o = b == null ? 0 : span(t, b, dout);
@@ -230,8 +235,8 @@ function show(el, t, a, b, { rise = 14, din = 0.9, dout = 0.45, max = 1 } = {}) 
 
 // the order the picture is built in: follow the flow
 const NODE_ORDER = ["start", "t1", "d1", "t2", "t3", "end"];
-const NODE_AT = [11.0, 11.26, 11.5, 11.72, 11.9, 12.06];
-const EDGE_AT = [12.7, 13.15, 13.6, 13.95, 14.4, 14.75];
+const NODE_AT = [0, 1, 2, 3, 4, 5].map(i => b(23 + i * 0.5));
+const EDGE_AT = [0, 1, 2, 3, 4, 5].map(i => b(26 + i));
 const rows = [...document.querySelectorAll(".row.r")];
 
 function drawDiagram(key, t, done) {
@@ -252,59 +257,59 @@ function drawDiagram(key, t, done) {
 
 window.render = function (t) {
   // 1 — the problem
-  $("L1").style.opacity = 1 - span(t, 3.75, 0.45);
+  $("L1").style.opacity = 1 - span(t, b(8), 0.45);
   show($("s1a"), t, 0.35, null, { rise: 18, din: 1.1 });
-  show($("s1b"), t, 1.55, null, { rise: 12, din: 1.1 });
+  show($("s1b"), t, b(3.5), null, { rise: 12, din: 1.1 });
 
   // 2 — the SOP is read
-  const in2 = out(span(t, 4.25, 1.0)), out2 = span(t, 9.35, 0.5);
+  const in2 = out(span(t, b(9), 1.0)), out2 = span(t, b(20), 0.45);
   $("L2").style.opacity = in2 * (1 - out2);
   $("doc").style.transform = `translateY(${(1 - in2) * 18}px) scale(${1 - 0.03 * inOut(out2)})`;
   rows.forEach((r, i) => {
-    const a = 5.5 + i * 0.62, on = span(t, a, 0.3), off = span(t, a + 0.62, 0.45);
+    const a = b(12 + i * 1.5), on = span(t, a, 0.25), off = span(t, a + b(1.5), 0.45);
     r.querySelector(".glow").style.opacity = on * (1 - off);
     r.querySelector(".bar").style.opacity = on * (1 - off);
     r.style.opacity = 0.42 + 0.58 * on;
   });
-  show($("c2"), t, 4.7, 9.3, { rise: 10 });
+  show($("c2"), t, b(10), b(19.8), { rise: 10 });
 
   // 3 — the layout is computed
-  const in3 = span(t, 10.0, 0.8), out3 = span(t, 22.9, 0.5);
+  const in3 = span(t, b(21), 0.8), out3 = span(t, b(48), 0.45);
   $("L3").style.opacity = out(in3) * (1 - out3);
   drawDiagram("M", t, false);
   drawDiagram("L", t, true);
   drawDiagram("R", t, true);
-  show($("c3a"), t, 10.4, 15.1, { rise: 10 });
-  show($("c3b"), t, 15.55, 18.2, { rise: 10 });
+  show($("c3a"), t, b(22), b(31.1), { rise: 10 });
+  show($("c3b"), t, b(32), b(38.8), { rise: 10 });
 
   // 4 — the same every time: the diagram steps back and two more runs land beside it
-  const k = inOut(span(t, 18.4, 1.1)), sc = 1 - 0.46 * k;
+  const k = inOut(span(t, b(39), 1.1)), sc = 1 - 0.46 * k;
   $("diaM").style.transform = `translateY(${k * 105}px) scale(${sc})`;
-  [["diaL", -612, 19.5], ["diaR", 612, 20.25]].forEach(([id, dx, at]) => {
+  [["diaL", -612, b(42)], ["diaR", 612, b(44)]].forEach(([id, dx, at]) => {
     const p = out(span(t, at, 0.9));
     $(id).style.opacity = p;
     $(id).style.transform = `translate(${dx}px, ${105 + (1 - p) * 12}px) scale(0.54)`;
   });
-  $("c4").style.opacity = 1 - span(t, 22.85, 0.45);
-  show($("c4a"), t, 18.75, null, { rise: 0, din: 0.7 });
-  show($("c4b"), t, 19.5, null, { rise: 0, din: 0.7 });
-  show($("c4c"), t, 20.25, null, { rise: 0, din: 0.7 });
+  $("c4").style.opacity = 1 - span(t, b(48), 0.45);
+  show($("c4a"), t, b(40), null, { rise: 0, din: 0.7 });
+  show($("c4b"), t, b(42), null, { rise: 0, din: 0.7 });
+  show($("c4c"), t, b(44), null, { rise: 0, din: 0.7 });
 
   // 5 — what it asks of you
-  $("L5").style.opacity = 1 - span(t, 26.35, 0.45);
-  show($("f1"), t, 23.5, null, { rise: 14 });
-  show($("f2"), t, 23.78, null, { rise: 14 });
-  show($("f3"), t, 24.0, null, { rise: 14 });
-  show($("s5sub"), t, 24.5, null, { rise: 0, din: 1.0 });
+  $("L5").style.opacity = 1 - span(t, b(55.2), 0.4);
+  show($("f1"), t, b(49), null, { rise: 14 });
+  show($("f2"), t, b(49.5), null, { rise: 14 });
+  show($("f3"), t, b(50), null, { rise: 14 });
+  show($("s5sub"), t, b(51.2), null, { rise: 0, din: 1.0 });
 
   // 6 — the name
   $("L6").style.opacity = 1;
-  show($("mark"), t, 26.9, null, { rise: 16, din: 1.2 });
-  const r = out(span(t, 27.35, 1.1));
+  show($("mark"), t, b(56), null, { rise: 16, din: 1.2 });
+  const r = out(span(t, b(57), 1.1));
   $("rule").style.opacity = r;
   $("rule").style.transform = `scaleX(${0.2 + 0.8 * r})`;
-  show($("tag"), t, 27.5, null, { rise: 8, din: 1.0 });
-  show($("url"), t, 28.1, null, { rise: 0, din: 1.0 });
+  show($("tag"), t, b(57.5), null, { rise: 8, din: 1.0 });
+  show($("url"), t, b(59), null, { rise: 0, din: 1.0 });
 };
 window.DURATION = 30;
 render(new URLSearchParams(location.search).get("t") ?? 0);
