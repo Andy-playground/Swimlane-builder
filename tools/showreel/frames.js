@@ -1,6 +1,7 @@
 // Dev-only: step film.html through time in headless Chromium.
 //   node frames.js <film.html> --stills <dir> <seconds...>
 //   node frames.js <film.html> --video <out.mp4> <fps> <soundtrack.wav>
+//   node frames.js <film.html> --hero <frames dir> <fps> <from> <to>
 // Called by render.py, which prepares the page.
 const { chromium } = require("playwright");
 const { spawn } = require("child_process");
@@ -20,6 +21,16 @@ const path = require("path");
     for (const s of rest) {
       await page.evaluate(t => window.render(t), +s);
       await page.screenshot({ path: path.join(target, `t${(+s).toFixed(2).padStart(5, "0")}.png`) });
+    }
+  } else if (mode === "--hero") {
+    // Frames for the README's looping animation: the layout scene only, cropped to the
+    // diagram and its caption. render.py assembles them.
+    const [fps, from, to] = rest.map(Number), total = Math.round((to - from) * fps);
+    fs.mkdirSync(target, { recursive: true });
+    for (let f = 0; f < total; f++) {
+      await page.evaluate(t => window.render(t), from + f / fps);
+      await page.screenshot({ path: path.join(target, `${String(f).padStart(4, "0")}.png`),
+                              clip: { x: 330, y: 44, width: 1260, height: 960 } });
     }
   } else {
     const fps = +rest[0], audio = rest[1], total = Math.round(duration * fps);
