@@ -5,7 +5,7 @@ input always gives the same picture.**
 
 <p align="center">
   <img src="docs/media/hero.webp" width="800"
-       alt="swimlane-builder laying out a diagram: columns from the flow, boxes sized from their text, lines routed through free corridors">
+       alt="swimlane-builder laying out a diagram: the lanes appear, each step lands in its column, and the lines are routed between the boxes">
 </p>
 
 <p align="center">
