@@ -12,202 +12,146 @@ input always gives the same picture.**
   <a href="docs/media/swimlane-builder-showreel.mp4"><b>▶ Watch the 30-second overview</b></a> (with sound)
   &nbsp;·&nbsp;
   <a href="https://github.com/Andy-playground/Swimlane-builder/releases/latest"><b>Download the latest release</b></a>
+  &nbsp;·&nbsp;
+  <a href="docs/OVERVIEW.md"><b>中文說明</b></a>
 </p>
 
-An LLM reads the SOP and writes down *what* happens — who does which step, where the flow
-branches, which steps loop back — as a small JSON spec. A plain Python program then works out
-*where* everything goes: columns, lane heights, box widths, and every line's route. The result
-is a `.drawio` file you open in [draw.io / diagrams.net](https://app.diagrams.net).
+## What it is
 
-- **No hand-drawn geometry.** Boxes are sized from their text, lines never cut through boxes,
-  and labels are placed where they do not cover anything — or you get a warning saying so.
-- **Deterministic.** The same spec produces a byte-identical file every time, so diagrams can
-  live in version control and be regenerated after every SOP change.
-- **Zero dependencies.** Python ≥ 3.11, standard library only. No network, no AI in the
-  generator.
+swimlane-builder draws the flowchart that belongs to a written procedure. You give it an SOP —
+a process table, a numbered step list, a Word document — and get back a swimlane diagram you
+can open and share in [draw.io / diagrams.net](https://app.diagrams.net): one horizontal lane
+per role or system, the steps laid out left to right, decisions branching, rework loops
+pointing back.
 
-中文說明：[docs/OVERVIEW.md](docs/OVERVIEW.md)（這工具在幹嘛、術語對照） ·
-錯誤碼白話表：[docs/CODES-zh.md](docs/CODES-zh.md)
+Nobody drags boxes. An AI model reads the SOP and writes down *what* happens: who does each
+step, where the flow branches, which steps loop back. A plain program then works out *where*
+everything goes: which column a step sits in, how tall each lane is, how wide each box is, and
+the path of every line.
+
+## Why it exists
+
+Diagrams drawn by hand have three problems that get worse with every SOP a team maintains:
+
+- **Two people draw the same procedure differently.** A set of SOPs ends up with as many
+  visual styles as it has authors.
+- **A small change means a big redraw.** Adding one step in the middle pushes everything after
+  it, so diagrams stop being updated.
+- **The diagram and the text drift apart.** Nothing checks that the picture still says what
+  the document says.
+
+swimlane-builder takes the drawing out of people's hands. People decide what the process is;
+the layout is computed, the same way every time.
+
+## What you get
+
+- **A diagram with no hand-placed geometry.** Boxes are sized to fit their text, lines run
+  through the free space between boxes and never cut through one, and labels are placed where
+  they cover nothing. Where that is not possible, the tool tells you.
+- **The same result every time.** One input produces exactly the same file, down to the byte.
+  A diagram can be kept in version control and regenerated whenever the SOP changes, and a
+  change in the picture always traces back to a change in the process.
+- **A check on the process itself.** Before drawing, the tool reports steps nothing leads to,
+  decisions with only one way out, loops nobody declared, and labels too long to read. See the
+  [list of messages](docs/CODES.md).
+- **One visual standard for many SOPs.** Colors, fonts and spacing live in a theme. A whole
+  folder of procedures can be generated in one run, and switching the theme restyles all of
+  them. Two themes are included: draw.io pastels, and plain black-and-white.
+- **An ordinary draw.io file.** No plugin or account is needed to open it, and the diagram
+  carries a legend, the SOP's own step numbers, and separate line styles for offline, system
+  and user interactions.
+- **Nothing to install, nothing sent anywhere.** The generator needs only Python 3.11 or
+  later. It uses no AI and no network; only the reading of the SOP involves an AI model, and
+  you choose which one.
+
+## Where it fits
+
+It works well when:
+
+- your procedures are written as steps with an owner each, especially process tables with a
+  Responsible column and "go to step N" pointers;
+- you maintain many SOPs and want them to look like one family;
+- SOPs change often and the diagrams have to keep up;
+- you want diagrams reviewed and versioned like documents, where a difference means something;
+- you already work with an AI assistant and want it to return a finished diagram from a
+  document.
+
+It is the wrong tool when:
+
+- you want to arrange a diagram by hand, or fine-tune one after it is generated. Changes are
+  made to the process description and the diagram is regenerated; hand edits are lost;
+- you need something other than a swimlane flowchart, such as full BPMN, an org chart or an
+  architecture diagram;
+- the procedure is one very long flow. Past about 14 columns the diagram no longer fits a
+  laptop screen at a readable size. The tool says so, and splitting the SOP is up to you.
 
 ## How it works
 
-```
-SOP document ──① extract──▶ spec.json ──② lint──▶ ③ layout ──④ emit──▶ diagram.drawio
-            (an LLM does this)          (this program: pure Python, no AI, no network)
-```
-
-1. **Extract** — an LLM follows [`prompts/extract_spec.md`](prompts/extract_spec.md) to turn
-   the SOP into a spec. This is the only step that needs to understand natural language.
-2. **Lint** — the spec is checked: dangling references, decisions with a single exit,
-   undeclared loops, labels too long to fit. Problems are printed as `E###` / `W###` codes.
-3. **Layout** — pure geometry: columns by longest-path layering, box widths from the label
-   text, and Manhattan routes that run only through the free corridors between boxes. A
-   corridor widens to fit the lines it carries, so parallel lines never share a track.
-4. **Emit** — the computed numbers are written out as draw.io (mxGraph) XML.
-
-## Quick start
-
-```bash
-git clone https://github.com/Andy-playground/swimlane-builder.git
-cd swimlane-builder
-python3 swimlane-builder.py generate examples/po-confirmation.spec.json -o po-confirmation.drawio
+```mermaid
+flowchart LR
+    A[SOP document] -->|1 · Extract<br/>an AI model| B[Process description]
+    B -->|2 · Check| C{Sound?}
+    C -->|No| B
+    C -->|Yes · 3 · Lay out| D[Computed positions]
+    D -->|4 · Write| E[draw.io file]
 ```
 
-Open `po-confirmation.drawio` in draw.io. Nothing to install.
+1. **Extract.** An AI model reads the SOP and writes a short, structured description of the
+   process: the lanes, the steps, and how they connect. This is the only step that has to
+   understand natural language. It is told never to invent a step the document does not state;
+   anything unclear is marked for you to resolve.
+2. **Check.** The description is tested for mistakes. Errors stop here with a message that
+   says what to fix; warnings are advice and do not stop the diagram.
+3. **Lay out.** Pure geometry. Columns follow the order of the flow, boxes grow with their
+   text, and the corridors between boxes widen to hold the lines that pass through them.
+4. **Write.** The computed positions are written out as a draw.io file.
 
-## Use it as an AI Skill
+Steps 2 to 4 are an ordinary program, which is why the result is repeatable.
 
-[`SKILL.md`](SKILL.md) drives the whole flow in any agent host that has file access and
-Python ≥ 3.11: hand it an SOP (text or `.docx`) and it extracts, lints, shows you a summary to
-review, and returns the `.drawio`.
+## How to use it
 
-Download `swimlane-builder-skill.zip` from the [latest release](https://github.com/Andy-playground/Swimlane-builder/releases/latest) (its SHA-256 is listed
-there), or build the same bytes yourself:
+There are two ways in, and the [usage guide](docs/USAGE.md) covers both step by step.
 
-```bash
-python3 tools/build_skill.py        # → dist/swimlane-builder-skill.zip + its sha256
-```
+- **Through an AI assistant.** The repository is packaged as a Skill. Add it to Claude, or to
+  any assistant that can read files and run Python, hand over an SOP as text or `.docx`, review
+  the summary of what it understood, and receive the diagram. The package is on the
+  [releases page](https://github.com/Andy-playground/Swimlane-builder/releases/latest).
+- **From the command line.** Have any AI model produce the process description using the
+  included instructions, then run the generator on it, for one file or for a whole folder.
 
-Upload the zip to Claude as a Skill, or unzip it as plain context files for any other agent.
-
-## Use it by hand
-
-1. **Extract:** give the SOP plus [`prompts/extract_spec.md`](prompts/extract_spec.md) to your
-   LLM and save the answer as `myflow.spec.json`
-   (for a `.docx` source, run `python3 tools/docx2txt.py file.docx` first).
-2. **Lint:** `python3 swimlane-builder.py lint myflow.spec.json` — fix every `E` code, read the
-   `W` codes.
-3. **Generate:** `python3 swimlane-builder.py generate myflow.spec.json -o myflow.drawio`
-4. **Open** the `.drawio` in draw.io. Never hand-edit it — edit the spec and regenerate.
-
-Many SOPs at once, one visual standard:
-
-```bash
-python3 swimlane-builder.py batch specs/ -o diagrams/ [--theme NAME]
-```
-
-Exit codes: `0` ok · `1` validation failed (codes printed) · `2` file I/O error.
-
-## The spec in one minute
-
-```json
-{
-  "meta":  { "sop_id": "SOP-001", "title": "Purchase Order Confirmation" },
-  "lanes": [
-    { "id": "buyer",    "label": "Buyer Logistics" },
-    { "id": "supplier", "label": "Supplier" }
-  ],
-  "nodes": [
-    { "id": "start", "lane": "buyer",    "type": "start",    "label": "PO released" },
-    { "id": "t1",    "lane": "supplier", "type": "task",     "label": "Confirm PO in portal" },
-    { "id": "d1",    "lane": "buyer",    "type": "decision", "label": "Qty / date match?" },
-    { "id": "end",   "lane": "buyer",    "type": "end",      "label": "PO confirmed" }
-  ],
-  "edges": [
-    { "from": "start", "to": "t1", "channel": "system" },
-    { "from": "t1",    "to": "d1" },
-    { "from": "d1",    "to": "end", "label": "Yes" },
-    { "from": "d1",    "to": "t1",  "label": "No", "kind": "feedback" }
-  ]
-}
-```
-
-- **lanes** — who: one horizontal band per role or system, top to bottom.
-- **nodes** — what: `start`, `end`, `task`, `decision`, `subprocess`, `document`. Optional
-  `step` (the SOP's own step number, shown as a badge), `note` (context that does not fit the
-  label), and `col` (a *minimum* column — the layout may still push a node further right).
-- **edges** — how steps connect. `label` is required on decision branches. `kind: "feedback"`
-  marks a loop back to an earlier step. `channel` (`offline` / `system` / `user`) sets the line
-  style.
-
-The full schema is [`schema/spec.schema.json`](schema/spec.schema.json).
-
-## Lint codes
-
-| Code | Meaning |
-|---|---|
-| **E001** | The spec's shape is wrong: missing field, wrong type, duplicate id, not exactly one start |
-| **E101** | A node or edge points to a lane or node that does not exist |
-| **E102** | A loop that is not declared — mark the edge that closes it `"kind": "feedback"` |
-| **E103** | A decision has fewer than two exits, or an unlabeled exit |
-| **E104** | A node cannot be reached from the start |
-| W201 | A node label does not fit even the widest box |
-| W202 | Too many columns — consider splitting the flow |
-| W203 | The start node is not in the first lane |
-| W204 | Two decisions share one lane and column, so their branches compete for space |
-| W205 | Only some nodes carry a `step` number |
-| W206 | A requested `col` is below what the flow allows, so the node was moved right |
-| W207 | A branch label is longer than two words — state the condition only |
-| W208 | An edge label is too wide, or has no free spot and is drawn over something |
-| W209 | Fitted to a 1366×768 screen, the text would read below 11 px |
-
-`E` codes stop generation; `W` codes are advice, and the diagram is still produced. W202 and
-W209 are budgets reported to the author — the layout never reshapes a flow to chase them.
-
-## Themes
-
-Colors, fonts and spacing are data, not code: [`themes/default.json`](themes/default.json)
-(draw.io pastels) and [`themes/classic.json`](themes/classic.json) (white boxes, black
-outlines, square corners). A theme file only lists what it changes. Pick one with `--theme`
-or with `meta.theme` in the spec.
+To see a result before trying it, open one of the examples below in draw.io.
 
 ## Examples
 
-Each spec ships with its generated `.drawio` next to it. The process content is fictional.
+Each example is a process description with its generated diagram next to it. The process
+content is fictional.
 
-| Spec | What it shows |
+| Example | What it shows |
 |---|---|
-| [`po-confirmation`](examples/po-confirmation.spec.json) | The minimal flow — a decision, a rework loop, three lanes |
-| [`special-order-shipment`](examples/special-order-shipment.spec.json) | 13 steps: documents, a subprocess, all three line styles |
-| [`booking-change`](examples/booking-change.spec.json) | 17 steps: seven decisions, branch labels that are not Yes/No, four lines merging on one node |
-| [`delivery-dates`](examples/delivery-dates.spec.json) | 15 columns: exception steps carried in `note`, long decision questions |
-
-## Development
-
-```bash
-python3 tests/test_all.py                                 # full suite: lint rules, geometry, golden XML
-python3 tests/test_all.py TestXml.test_golden_snapshot    # one test or class
-python3 tools/check_schema.py                             # examples vs. the JSON Schema (needs `pip install jsonschema`)
-python3 tools/preview.py out.drawio -o shots/out.png      # render a .drawio to PNG without draw.io (needs Chromium)
-```
-
-Code layout (`src/swimlane_builder/`):
-
-- `cli.py` — loads spec → theme → `validate.lint` → `layout.compute` → `xmlgen.emit`.
-- `validate.py` — hand-rolled schema check plus semantic lint; returns `[(code, message)]`.
-- `layout.py` — pure geometry: columns, sizes, lane heights, ports, routes, label placement.
-- `xmlgen.py` — writes mxGraph XML from the layout; computes nothing.
-- `themes.py` — loads `themes/*.json`.
-
-Rules that keep it working:
-
-1. **Keep the stages apart.** `layout.py` never knows about XML; `xmlgen.py` never computes
-   geometry. New geometry goes in layout, new styling in a theme file, new markup in xmlgen.
-2. **Determinism is tested byte for byte.** `test_golden_snapshot` regenerates every
-   `examples/*.spec.json` and compares it with the committed `.drawio`. After an intentional
-   output change, regenerate them
-   (`python3 swimlane-builder.py generate examples/<name>.spec.json -o examples/<name>.drawio`),
-   review the diff, and open them in draw.io before committing.
-3. **The schema lives in two places.** `schema/spec.schema.json` and `validate._shape` (the
-   runtime stays stdlib-only). Change one, change the other; CI's `check_schema.py` catches drift.
-4. **The font is pinned.** Box widths are computed from a Helvetica 14 text metric in the
-   theme, so every style must carry `fontFamily`/`fontSize` — otherwise the reader's draw.io
-   re-flows the text.
-5. **Every lint code has a failing fixture** in `tests/test_all.py`.
-
-`tools/preview.py` approximates draw.io's renderer: it is evidence about the computed geometry,
-not a replacement for opening the file in draw.io.
+| [Purchase order confirmation](examples/po-confirmation.drawio) | The smallest useful flow: three lanes, one decision, one rework loop |
+| [Special order shipment](examples/special-order-shipment.drawio) | 13 steps with documents, a sub-process, and all three line styles |
+| [Booking change](examples/booking-change.drawio) | 17 steps and seven decisions, with branches that are not just Yes/No |
+| [Delivery dates](examples/delivery-dates.drawio) | A wide flow of 15 columns with exception steps and long decision questions |
 
 ## Known limitations
 
-- A long `start`/`end` label can overflow its fixed-size circle, and no lint code reports it yet.
-- Wide flows (roughly 14 columns and up) do not fit one laptop screen at a readable size. W209 says so;
-  splitting the SOP into two flows is the author's call.
-- The two branches leaving a decision can still cross each other near the decision when one
-  branch travels further than the other.
-- A label on a very short line can overlap the shapes around it; W208 reports it.
-- An arrow entering a `document` shape from below stops at the shape's box, just under its
-  wavy bottom edge.
+- A long label on a start or end circle can spill outside the circle, and nothing warns about
+  it yet.
+- Wide flows, from roughly 14 columns, do not fit one laptop screen at a readable size. A
+  warning reports it; the tool never reshapes a flow to make it fit.
+- The two branches leaving a decision can cross each other near the decision when one branch
+  travels further than the other.
+- A label on a very short line can overlap the shapes around it. A warning reports it.
+- An arrow entering a document shape from below stops just under the shape's wavy bottom edge.
+
+## Documentation
+
+| Document | For |
+|---|---|
+| [Usage guide](docs/USAGE.md) | Running the tool, the process description format, themes |
+| [Messages](docs/CODES.md) | What each error and warning means and what to do about it |
+| [Development](docs/DEVELOPMENT.md) | Code layout, tests, and the rules that keep output stable |
+| [中文說明](docs/OVERVIEW.md) · [錯誤碼白話表](docs/CODES-zh.md) | 中文版的介紹、術語對照與錯誤碼 |
 
 ## License
 
