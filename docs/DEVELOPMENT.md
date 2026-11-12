@@ -13,6 +13,7 @@ python3 tests/test_all.py TestXml.test_golden_snapshot    # one test or class
 python3 tools/check_schema.py                             # examples vs. the JSON Schema
 python3 tools/preview.py out.drawio -o shots/out.png      # render a .drawio to PNG without draw.io
 python3 tools/build_skill.py                              # assemble the Skill zip and print its SHA-256
+python3 tools/showreel/render.py                          # re-render the overview film (needs Node + Playwright, ffmpeg, Inter)
 ```
 
 `tools/preview.py` approximates draw.io's renderer. It is evidence about the computed
@@ -42,6 +43,7 @@ Elsewhere in the repository:
 | `SKILL.md` | The instructions an agent follows when the repository is used as a Skill |
 | `examples/` | Specs with their generated diagrams; these are also the golden files for the tests |
 | `tools/` | Developer tools, plus `docx2txt.py`, which ships in the Skill |
+| `tools/showreel/` | Source of the overview film in `docs/media/`: a page drawn from the generator's own layout, stepped frame by frame |
 
 `SKILL.md` and `prompts/extract_spec.md` are written for an AI model to follow, not as
 documentation for people. Both ship in the Skill zip, so editing either changes the model's
