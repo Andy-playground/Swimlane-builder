@@ -1,7 +1,6 @@
 # swimlane-builder
 
-**Turn an SOP (standard operating procedure) into a clean draw.io swimlane diagram — the same
-input always gives the same picture.**
+**Turn an SOP (standard operating procedure) into a clean draw.io swimlane diagram.**
 
 <p align="center">
   <img src="docs/media/hero.webp" width="800"
