@@ -1,9 +1,9 @@
 # swimlane-builder
 
-**Today's tools draw swimlane flowcharts worse than you would expect, so this Skill builds one
-as a draw.io file that opens directly in the tools you already use.**
+**Swimlane flowcharts that come out right the first time, delivered as a draw.io file you can
+open in the tools you already use.**
 
-Mermaid, SVG and Visio output are planned.
+More formats are on the way: Mermaid, SVG and Visio.
 
 <p align="center">
   <img src="docs/media/hero.webp" width="800"
@@ -40,51 +40,53 @@ What you can hand over:
   meeting where the process was agreed. Sorting that into steps is what language models are
   good at.
 
-Anything the source leaves unclear is marked for you to settle, never filled in.
+If something in your source is unclear, the assistant asks you. It does not make up steps.
 
-To change the diagram, say what changed and it is regenerated. Step-by-step instructions for
+To change the diagram, tell the assistant what changed and it draws a new one. Step-by-step instructions for
 the Skill and the command line are in the [usage guide](docs/USAGE.md).
 
 ## What it does for you
 
-Lanes, steps, decisions and arrows are the baseline. The rest is what you would otherwise fix
-by hand:
+Every tool can draw lanes, boxes and arrows. This one also handles the parts you would
+normally fix by hand:
 
 **Layout**
 
-- Every box is sized to its text, and every lane to what it holds.
-- The main path reads straight from left to right; branches and rework loops are placed
-  around it.
-- The page size is chosen to fit the finished diagram.
+- Boxes grow to fit their text, and lanes grow to fit their boxes.
+- The main flow runs in a straight line from left to right. Side branches are placed around
+  it.
+- The page size is picked to fit the diagram.
 
 **Lines**
 
-- A line never cuts through a box.
-- Lines that travel together run side by side, never on top of each other.
-- Each line takes the route with the fewest turns, and where several meet at one box they are
-  ordered to cross as little as possible.
-- Rework loops go around the flow, so "back to step 3" is visible at a glance.
-- System, user and offline interactions each get their own line style.
+- Lines never cut through a box.
+- Lines never sit on top of each other. When several go the same way, they run side by side.
+- Lines take the route with the fewest turns and cross each other as little as possible.
+- An arrow that sends work back to an earlier step runs around the outside, so it is easy to
+  spot.
+- Line styles show how a handover happens: system to system, a person using a system, or
+  offline (email, phone).
 
 **Labels and annotations**
 
-- Branch labels sit beside the line they name and cover nothing.
-- Each step carries the step number from your own document, so the diagram and the text can
-  be read side by side.
-- A legend is added, listing only the shapes and line styles the diagram uses.
+- "Yes" and "No" labels sit next to their own arrow and do not cover a box or another line.
+- Each box shows the step number from your document, so you can match the diagram to the
+  text.
+- A legend is added automatically.
 
 **Checks before drawing**
 
-- The process itself is checked: steps nothing leads to, decisions with only one way out,
-  loops that were never stated.
-- You are told when a diagram is too wide to read on a laptop screen, and how much would fit.
+- It finds gaps in the process before drawing. For example: a step that no arrow leads to,
+  or a yes/no question that only has a "yes" path.
+- It warns you when the diagram is too wide to read on a laptop screen.
 
 **Consistency**
 
-- The same input gives the same file every time, so a diagram can be versioned and compared
-  like any document.
-- Colors, fonts and spacing come from a theme. A whole folder of procedures can be generated
-  in one run and look like one family. Two themes are included.
+- The same input always gives the same diagram. When the diagram changes, it is because the
+  process changed.
+- All your diagrams share one look. Colors, fonts and spacing come from a theme, and two
+  themes are included.
+- A whole folder of procedures can be drawn in one run.
 
 ## Examples
 
