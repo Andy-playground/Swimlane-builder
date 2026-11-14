@@ -1,7 +1,7 @@
 # Usage guide
 
-How to get from an SOP to a `.drawio` file. For what the tool is and when to use it, see the
-[README](../README.md).
+How to get from a process description to a `.drawio` file. For what the tool is and what it
+does, see the [README](../README.md).
 
 Requirements: Python 3.11 or later. There is nothing to install and no network access is
 needed.
@@ -162,3 +162,32 @@ Colors, fonts and spacing are data. Two themes are included:
 Choose one with `--theme NAME` on the command line or with `meta.theme` in the spec; the
 command line wins. To make your own, add a JSON file to `themes/` that lists only the values
 it changes from the default.
+
+## Where it fits
+
+It works well when:
+
+- the process has steps with an owner each, especially a RACI matrix or a process table with
+  a Responsible column and "go to step N" pointers;
+- you maintain many procedures and want them to look like one family;
+- procedures change often and the diagrams have to keep up;
+- you want diagrams reviewed and versioned like documents.
+
+It is the wrong tool when:
+
+- you want to arrange a diagram by hand, or fine-tune one after it is generated;
+- you need something other than a swimlane flowchart, such as full BPMN, an org chart or an
+  architecture diagram;
+- the procedure is one very long flow. Past about 14 columns the diagram no longer fits a
+  laptop screen at a readable size. The tool says so, and splitting the flow is up to you.
+
+## Known limitations
+
+- A long label on a start or end circle can spill outside the circle, and nothing warns about
+  it yet.
+- Wide flows, from roughly 14 columns, do not fit one laptop screen at a readable size. A
+  warning reports it; the tool never reshapes a flow to make it fit.
+- The two branches leaving a decision can cross each other near the decision when one branch
+  travels further than the other.
+- A label on a very short line can overlap the shapes around it. A warning reports it.
+- An arrow entering a document shape from below stops just under the shape's wavy bottom edge.
