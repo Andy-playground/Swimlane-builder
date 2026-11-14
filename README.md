@@ -1,9 +1,7 @@
 # swimlane-builder
 
-**Swimlane flowcharts that come out right the first time, delivered as a draw.io file you can
-open in the tools you already use.**
-
-More formats are on the way: Mermaid, SVG and Visio.
+Swimlane flowcharts that come out right the first time, delivered as a draw.io file you can
+open in the tools you already use. More formats are on the way: Mermaid, SVG and Visio.
 
 <p align="center">
   <img src="docs/media/hero.webp" width="800"
