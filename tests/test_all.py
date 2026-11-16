@@ -878,9 +878,11 @@ class TestRouting(unittest.TestCase):
     def test_bends_do_not_regress(self):
         """An edge turns no more often than its faces and the nodes around it
         require. Like crossings, the total is held to what each example last shipped
-        with — a change may lower it, never raise it."""
-        budget = {"delivery-dates.spec.json": 23, "po-confirmation.spec.json": 9,
-                  "booking-change.spec.json": 37, "special-order-shipment.spec.json": 14}
+        with — a change may lower it, never raise it, except to buy fewer crossings:
+        swapping which branch leaves a decision on the right cost booking-change one
+        bend and saved it three crossings."""
+        budget = {"delivery-dates.spec.json": 22, "po-confirmation.spec.json": 9,
+                  "booking-change.spec.json": 38, "special-order-shipment.spec.json": 14}
         for name, _spec, lay in self.layouts():
             if name in budget:
                 n = sum(len(e["points"]) for e in lay["edges"])
@@ -890,8 +892,8 @@ class TestRouting(unittest.TestCase):
         """Crossings between unrelated edges cannot all be avoided in a real SOP, so their
         count is a measured budget, not an invariant: it may only go down. A change
         that lowers one lowers the number here in the same commit; one that raises it fails."""
-        budget = {"delivery-dates.spec.json": 1, "po-confirmation.spec.json": 0,
-                  "booking-change.spec.json": 17, "special-order-shipment.spec.json": 1}
+        budget = {"delivery-dates.spec.json": 0, "po-confirmation.spec.json": 0,
+                  "booking-change.spec.json": 14, "special-order-shipment.spec.json": 1}
         for name, _spec, lay in self.layouts():
             if name not in budget:
                 continue
