@@ -3,8 +3,8 @@
 How to get from a process description to a `.drawio` file. For what the tool is and what it
 does, see the [README](../README.md).
 
-Requirements: Python 3.11 or later. There is nothing to install and no network access is
-needed.
+Requirements: Python 3.11 or later, with no extra packages. The generator makes no network
+calls; an AI assistant that prepares the spec for you needs its own connection.
 
 ## Try it
 
@@ -59,8 +59,8 @@ python3 tools/build_skill.py        # → dist/swimlane-builder-skill.zip + its 
 
 4. **Open** the `.drawio` in draw.io.
 
-Never edit the `.drawio` by hand. Edit the spec and regenerate; a hand edit is lost on the
-next run.
+Change the process by editing the spec and regenerating. Touch-ups by hand in draw.io are
+fine, but make them last: a hand edit is lost on the next run.
 
 ### Many SOPs at once
 
@@ -189,5 +189,7 @@ It is the wrong tool when:
   warning reports it; the tool never reshapes a flow to make it fit.
 - The two branches leaving a decision can cross each other near the decision when one branch
   travels further than the other.
+- Crossed lines are reduced, not removed. A flow with many decisions will still have some.
+- Edits made by hand in draw.io are not carried into a regenerated diagram.
 - A label on a very short line can overlap the shapes around it. A warning reports it.
 - An arrow entering a document shape from below stops just under the shape's wavy bottom edge.
